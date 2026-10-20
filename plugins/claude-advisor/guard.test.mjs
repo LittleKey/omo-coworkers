@@ -1,8 +1,9 @@
-// Tests for the claude-advisor dispatch guard (plugins/claude-advisor/index.mjs).
+// Tests for the claude-advisor dispatch guard (plugins/claude-advisor/index.v1.mjs).
 // Run: node --test plugins/claude-advisor/guard.test.mjs
 import test from "node:test"
 import assert from "node:assert/strict"
-import { ClaudeAdvisorGuard } from "./index.mjs"
+import { ClaudeAdvisorGuard } from "./index.v1.mjs"
+import claudeAdvisorV2 from "./index.js"
 
 const hooks = await ClaudeAdvisorGuard()
 assert.deepEqual(Object.keys(hooks), ["tool.execute.before"], "plugin must register exactly one hook")
@@ -64,6 +65,25 @@ test("checkpoint 1: description over 160 bytes is rejected", async () => {
   await expectReject("task", { subagent_type: "claude", prompt: "ok", description: "y".repeat(161) })
 })
 
+test("checkpoint 1 (v2 tool name): plain and at-cap subagent for claude are accepted", async () => {
+  await run("subagent", { subagent_type: "claude", prompt: "Review the cache policy in src/cache.ts.", description: "Cache review" })
+  await run("subagent", { subagent_type: "claude", prompt: "a".repeat(8192), description: "d".repeat(160) })
+})
+
+test("checkpoint 1 (v2 tool name): oversized subagent prompt is rejected", async () => {
+  await expectReject("subagent", { subagent_type: "claude", prompt: "x".repeat(8192) + "MARKER7", description: "ok" }, "MARKER7")
+})
+
+test("checkpoint 1 (v2 tool name): non-ASCII subagent prompt is rejected", async () => {
+  await expectReject("subagent", { subagent_type: "claude", prompt: "MARKER8 评估缓存方案", description: "ok" }, "MARKER8")
+})
+
+test("non-claude subagent passes through untouched", async () => {
+  const args = { subagent_type: "general", prompt: "评估缓存方案", description: "架构评审" }
+  await run("subagent", args)
+  assert.deepEqual(args, { subagent_type: "general", prompt: "评估缓存方案", description: "架构评审" })
+})
+
 test("checkpoint 2: acp_run with exactly {agent, prompt} is accepted", async () => {
   await run("acp_run", { agent: "claude", prompt: "Reassess the cache capacity policy." })
 })
@@ -90,12 +110,24 @@ test("non-claude task/acp_run and other tools pass through untouched", async () 
   await run("read", { filePath: "/tmp/任意" })
 })
 
+test("v2 hook enforces the native subagent agent selector", async () => {
+  let handler
+  await claudeAdvisorV2.setup({ tool: { hook: async (name, cb) => {
+    assert.equal(name, "execute.before")
+    handler = cb
+  } } })
+  await handler({ tool: "subagent", input: { agent: "claude", prompt: "Review cache.", description: "Cache review" } })
+  await assert.rejects(() => handler({ tool: "subagent", input: { agent: "claude", prompt: "x".repeat(8193), description: "Review" } }), /limit is 8192/)
+  await assert.rejects(() => handler({ tool: "subagent", input: { agent: "claude", prompt: "评估", description: "Review" } }), /printable ASCII/)
+  await handler({ tool: "subagent", input: { agent: "oracle", prompt: "评估", description: "Review" } })
+})
+
 test("no rejected content is ever echoed in error messages", async () => {
   assert.ok(rejectedMessages.length >= 10, "expected rejections from the cases above to be collected")
   for (const msg of rejectedMessages) {
     assert.match(msg, /^Claude dispatch rejected: /)
     assert.doesNotMatch(msg, /[\u0080-\uFFFF]/, "error message must stay pure ASCII")
-    for (const marker of ["MARKER1", "MARKER2", "MARKER3", "MARKER4", "MARKER5", "MARKER6"]) {
+    for (const marker of ["MARKER1", "MARKER2", "MARKER3", "MARKER4", "MARKER5", "MARKER6", "MARKER7", "MARKER8"]) {
       assert.ok(!msg.includes(marker), `error message must not echo rejected content (${marker})`)
     }
   }

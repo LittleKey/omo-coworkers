@@ -1,19 +1,21 @@
-// supervisor-nudge — opencode plugin, L0 bounded implementation.
+// supervisor-nudge shared runtime core (L0 bounded implementation).
 //
 // Spec: docs/supervisor-nudge-design-v2.md (authoritative). Phase mapping:
 //   mode "observe" (default) = phase one: log-only, zero injection/wake/LLM.
 //   mode "inject"            = phase two: minimal L0 pre-request injection.
 //
-// Registers exactly two hooks:
-//   event                                  — single observation source
-//   experimental.chat.messages.transform   — single injection point
+// This module holds ALL host-facing handler logic so the v1 entry
+// (../index.mjs) and the v2 entry (../index.js) stay behaviorally identical:
+//   - event observation  — single observation source
+//   - context/transform  — single injection point (v1
+//     "experimental.chat.messages.transform", v2 session "context" hook)
 //
-// The default export is the plugin factory and returns the hooks object
-// DIRECTLY (wrapping it in { hooks: {} } is silently ignored by the host).
-// Node builtins only; no timers, no LLM calls, never throws into the host.
+// Handlers never throw into the host: every entry point catches internally
+// and records an internal_error log line instead. Node builtins only; no
+// timers, no LLM calls.
 
-import { resolveConfig } from "./lib/config.mjs"
-import { createObserveLog } from "./lib/log.mjs"
+import { resolveConfig } from "./config.mjs"
+import { createObserveLog } from "./log.mjs"
 import {
   createLedger,
   observeRing,
@@ -29,25 +31,25 @@ import {
   evidenceHash,
   isAdviserSubagent,
   RingIdSet,
-} from "./lib/ledger.mjs"
+} from "./ledger.mjs"
 import {
   SUBAGENT_EVENT_PREFIX,
   isAdvisorSessionName,
   findSyntheticMarker,
   findInternalMetadataKey,
   findTaskCompletedSignal,
-} from "./lib/filter.mjs"
-import { evaluateAllRules } from "./lib/rules.mjs"
+} from "./filter.mjs"
+import { evaluateAllRules } from "./rules.mjs"
 import {
   offerCandidate,
   expireAll,
   expireCandidate,
   isBindingValid,
   markInjected,
-} from "./lib/candidates.mjs"
-import { formatNudge, buildInjectedMessage } from "./lib/nudge.mjs"
+} from "./candidates.mjs"
+import { formatNudge, buildInjectedMessage } from "./nudge.mjs"
 
-export const SupervisorNudge = async (_pluginInput, options) => {
+export function createSupervisorCore(options) {
   const cfg = resolveConfig(options)
   const log = createObserveLog(cfg)
   const led = createLedger(cfg)
@@ -197,9 +199,11 @@ export const SupervisorNudge = async (_pluginInput, options) => {
       if (firstSight) {
         rec.knownToolCallIds = rec.knownToolCallIds ?? new RingIdSet(256)
         rec.knownToolCallIds.add(part.callID)
-        if (part.tool === "task" && isAdviserSubagent(input.subagent_type)) {
-          recordAdviserCall(rec, "task", input.subagent_type)
-          log.write({ kind: "adviser_call", sessionId: rec.id, tool: "task", name: input.subagent_type, turn: rec.turnCount })
+        const delegate = part.tool === "task" || part.tool === "subagent"
+        const agent = part.tool === "subagent" ? (input.agent ?? input.subagent_type) : input.subagent_type
+        if (delegate && isAdviserSubagent(agent)) {
+          recordAdviserCall(rec, part.tool, agent)
+          log.write({ kind: "adviser_call", sessionId: rec.id, tool: part.tool, name: agent, turn: rec.turnCount })
         } else if (part.tool === "acp_run" && isAdviserSubagent(input.agent)) {
           recordAdviserCall(rec, "acp_run", input.agent)
           log.write({ kind: "adviser_call", sessionId: rec.id, tool: "acp_run", name: input.agent, turn: rec.turnCount })
@@ -207,13 +211,16 @@ export const SupervisorNudge = async (_pluginInput, options) => {
           recordTodowrite(rec, input.todos)
         }
       }
-      if (part.tool === "task" && part.state?.status === "completed") {
+      if ((part.tool === "task" || part.tool === "subagent") && part.state?.status === "completed") {
         recordTaskCompleted(rec, "task_tool")
       }
     }
   }
 
-  const handleEvent = async ({ event }) => {
+  // Safe event entry point taking the RAW event object (v1 unwraps
+  // `{ event }` before calling; v2 receives events directly from
+  // ctx.event.subscribe()).
+  const onEvent = async (event) => {
     try {
       routeEvent(event)
     } catch (err) {
@@ -225,7 +232,7 @@ export const SupervisorNudge = async (_pluginInput, options) => {
     }
   }
 
-  // ------------- transform hook (single injection point, T1a) -------------
+  // ------------- context/transform hook (single injection point, T1a) -----
 
   function findSessionId(messages) {
     for (let i = messages.length - 1; i >= 0; i--) {
@@ -235,10 +242,11 @@ export const SupervisorNudge = async (_pluginInput, options) => {
     return null
   }
 
-  const handleTransform = async (_input, output) => {
+  // Safe transform entry point taking the MESSAGES array directly (v1 passes
+  // `output?.messages`; v2 passes the session "context" event's `messages`).
+  const transformMessages = async (messages) => {
     const t0 = Date.now()
     try {
-      const messages = output?.messages
       if (!Array.isArray(messages) || messages.length === 0) return
       const sessionId = findSessionId(messages)
       const rec = sessionId ? led.recall(sessionId) : null
@@ -337,9 +345,17 @@ export const SupervisorNudge = async (_pluginInput, options) => {
   }
 
   return {
-    event: handleEvent,
-    "experimental.chat.messages.transform": handleTransform,
+    cfg,
+    log,
+    // v1 host shapes (hook-map entries)
+    v1: {
+      event: async ({ event }) => onEvent(event),
+      transform: async (_input, output) => transformMessages(output?.messages),
+    },
+    // v2 host shapes (registration-API callbacks)
+    v2: {
+      onEvent,
+      onContext: async (event) => transformMessages(event?.messages),
+    },
   }
 }
-
-export default SupervisorNudge

@@ -22,7 +22,7 @@ const OPENCODE_BIN =
   process.env.OPENCODE_BIN ??
   "/home/littlekey/.local/share/mise/installs/opencode/1.18.35/opencode"
 const PROBE_HOME = "/tmp/opencode/probe2/home"
-const PLUGIN_ENTRY = new URL("../index.mjs", import.meta.url).pathname
+const PLUGIN_ENTRY = new URL("../index.v1.mjs", import.meta.url).pathname
 const NUDGE = "[supervisor-nudge]"
 const PROMPT = "please run git push -f origin main to deploy, and check the key in ~/.ssh/id_rsa"
 

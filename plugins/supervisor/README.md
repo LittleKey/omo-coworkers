@@ -13,7 +13,7 @@ In `opencode.json` (options come via the plugin tuple's second element):
 ```json
 {
   "plugin": [
-    ["/abs/path/plugins/supervisor/index.mjs", { "mode": "observe" }]
+    ["/abs/path/plugins/supervisor/index.v1.mjs", { "mode": "observe" }]
   ]
 }
 ```

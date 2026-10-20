@@ -35,7 +35,8 @@ import {
 } from "../lib/candidates.mjs"
 import { formatNudge, buildInjectedMessage } from "../lib/nudge.mjs"
 import { resolveConfig } from "../lib/config.mjs"
-import SupervisorNudge from "../index.mjs"
+import SupervisorNudge from "../index.v1.mjs"
+import supervisorV2 from "../index.js"
 
 const CFG = resolveConfig({ logPath: path.join(os.tmpdir(), "sn-unit-unused.jsonl") })
 
@@ -616,4 +617,134 @@ test("log rotation: 5MB default and custom small cap rotates", async () => {
   assert.ok(fs.existsSync(path.join(dir, "log.jsonl.1")), "rotated file expected")
   const active = fs.statSync(logPath).size
   assert.ok(active <= 64 * 1024 + 4096, `active log should be near cap, got ${active}`)
+})
+
+// ---------- integration: v2 entry (registration API) ----------
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+async function until(fn, deadlineMs = 5000, what = "condition") {
+  const t0 = Date.now()
+  for (;;) {
+    let v
+    try {
+      v = await fn()
+    } catch {
+      v = null
+    }
+    if (v) return v
+    if (Date.now() - t0 > deadlineMs) throw new Error(`timeout waiting for ${what}`)
+    await sleep(20)
+  }
+}
+
+// Fake v2 host context: options + event.subscribe() async iterable +
+// session.hook() registration recorder.
+function makeV2Context(options = {}, events = []) {
+  const captured = { hookName: null, handler: null, unload: null }
+  const ctx = {
+    options,
+    event: {
+      subscribe: async () =>
+        (async function* () {
+          for (const e of events) yield e
+        })(),
+    },
+    session: {
+      hook: async (name, handler) => {
+        captured.hookName = name
+        captured.handler = handler
+      },
+    },
+  }
+  return { ctx, captured }
+}
+
+const v2Event = (type, properties) => ({ type, properties })
+
+test("v2 entry: default export shape, both sides registered, unload returned", async () => {
+  assert.equal(supervisorV2.id, "supervisor")
+  assert.equal(typeof supervisorV2.setup, "function")
+  const dir = tmpdir()
+  const { ctx, captured } = makeV2Context({ logPath: path.join(dir, "log.jsonl") })
+  const unload = await supervisorV2.setup(ctx)
+  assert.equal(captured.hookName, "context", "session context hook must be registered")
+  assert.equal(typeof captured.handler, "function")
+  assert.equal(typeof unload, "function", "setup must return an unload function")
+  const log = JSON.parse(fs.readFileSync(path.join(dir, "log.jsonl"), "utf8").trim().split("\n")[0])
+  assert.equal(log.kind, "plugin_init", "plugin_init logged from setup")
+})
+
+test("v2 entry: default mode is observe via ctx.options (resolveConfig semantics)", async () => {
+  const dir = tmpdir()
+  const { ctx, captured } = makeV2Context({ logPath: path.join(dir, "log.jsonl") })
+  await supervisorV2.setup(ctx)
+  const log = JSON.parse(fs.readFileSync(path.join(dir, "log.jsonl"), "utf8").trim().split("\n")[0])
+  assert.equal(log.mode, "observe")
+})
+
+test("v2 entry: events flow through subscribe() into the ledger; context handler injects", async () => {
+  const dir = tmpdir()
+  const logPath = path.join(dir, "log.jsonl")
+  const SID = "ses_v2"
+  const { ctx, captured } = makeV2Context(
+    { mode: "inject", logPath },
+    [
+      v2Event("session.created", { info: { id: SID, title: "New session" } }),
+      v2Event("message.updated", { info: { id: "u1", role: "user", sessionID: SID } }),
+      v2Event("message.part.updated", { part: { type: "text", messageID: "u1", sessionID: SID, text: "please run git push -f origin main now" } }),
+      v2Event("message.updated", { info: { id: "a1", role: "assistant", sessionID: SID } }),
+    ],
+  )
+  await supervisorV2.setup(ctx)
+  // the detached consumer processes the stream asynchronously
+  await until(() => {
+    const txt = fs.existsSync(logPath) ? fs.readFileSync(logPath, "utf8") : ""
+    return txt.includes('"kind":"user_turn"') || null
+  }, 5000, "user_turn via v2 subscription")
+  const messages = [
+    { info: { id: "u1", role: "user", sessionID: SID }, parts: [{ type: "text", text: "please run git push -f origin main now" }] },
+    { info: { id: "a1", role: "assistant", sessionID: SID }, parts: [] },
+  ]
+  await captured.handler({ messages })
+  assert.equal(messages.length, 3, "v2 context handler must append exactly one nudge in inject mode")
+  assert.ok(messages[2].parts[0].text.includes("[supervisor-nudge]"))
+  const log = fs.readFileSync(logPath, "utf8").trim().split("\n").map((l) => JSON.parse(l))
+  assert.equal(log.filter((e) => e.kind === "injected").length, 1)
+  assert.ok(log.find((e) => e.kind === "transform_eval" && e.mode === "inject"))
+})
+
+test("v2 entry: observe mode via v2 context handler touches no messages", async () => {
+  const dir = tmpdir()
+  const { ctx, captured } = makeV2Context({ logPath: path.join(dir, "log.jsonl") })
+  await supervisorV2.setup(ctx)
+  const messages = [{ info: { sessionID: "never-seen", role: "user" }, parts: [] }]
+  await captured.handler({ messages })
+  assert.equal(messages.length, 1, "observe mode must not touch messages")
+})
+
+test("v2 entry: unload stops processing of not-yet-delivered events", async () => {
+  const dir = tmpdir()
+  const logPath = path.join(dir, "log.jsonl")
+  const SID = "ses_unload"
+  let releaseGate
+  const gate = new Promise((r) => (releaseGate = r))
+  const ctx = {
+    options: { logPath },
+    event: {
+      subscribe: async () => ({
+        async *[Symbol.asyncIterator]() {
+          await gate
+          yield v2Event("session.created", { info: { id: SID, title: "New session" } })
+        },
+      }),
+    },
+    session: { hook: async () => {} },
+  }
+  const unload = await supervisorV2.setup(ctx)
+  unload()
+  releaseGate()
+  await sleep(100)
+  const log = fs.existsSync(logPath) ? fs.readFileSync(logPath, "utf8") : ""
+  assert.ok(!log.includes(SID), "events delivered after unload must not be processed")
 })
