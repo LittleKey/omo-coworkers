@@ -7,9 +7,9 @@
 //   1. delegation to claude — v1 tool "task", v2.1.0+ tool "subagent" — with
 //      args.subagent_type (v1) or args.agent (v2) === "claude": args.prompt and
 //      args.description must be non-empty printable ASCII (tab/LF/CR allowed),
-//      prompt <= 8192 bytes, description <= 160 bytes.
+//      prompt <= 524288 bytes (512 KiB), description <= 160 bytes.
 //   2. acp_run with args.agent === "claude": args.prompt gets the same ASCII
-//      and 8192-byte rules, and the call may carry exactly the keys
+//      and 524288-byte rules, and the call may carry exactly the keys
 //      {agent, prompt}; anything else (cwd, timeout_ms, ...) is rejected.
 //
 // The predicate THROWS on violation (blocking execution in both generations)
@@ -19,7 +19,7 @@
 // state, retries/transliteration. Node builtins only; no third-party deps.
 
 const PRINTABLE_ASCII = /^[\x09\x0A\x0D\x20-\x7E]+$/
-const PROMPT_MAX_BYTES = 8192
+const PROMPT_MAX_BYTES = 524288
 const DESCRIPTION_MAX_BYTES = 160
 
 function reject(rule) {

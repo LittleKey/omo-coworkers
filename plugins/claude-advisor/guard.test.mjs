@@ -31,8 +31,8 @@ test("checkpoint 1: plain ASCII task for claude is accepted", async () => {
   await run("task", { subagent_type: "claude", prompt: "Review the cache policy in src/cache.ts.", description: "Cache review" })
 })
 
-test("checkpoint 1: exactly-at-cap prompt (8192 B) and description (160 B) are accepted", async () => {
-  await run("task", { subagent_type: "claude", prompt: "a".repeat(8192), description: "d".repeat(160) })
+test("checkpoint 1: exactly-at-cap prompt (524288 B) and description (160 B) are accepted", async () => {
+  await run("task", { subagent_type: "claude", prompt: "a".repeat(524288), description: "d".repeat(160) })
 })
 
 test("checkpoint 1: CJK prompt is rejected", async () => {
@@ -57,8 +57,8 @@ test("checkpoint 1: empty, whitespace-only, and missing prompt are rejected", as
   await expectReject("task", { subagent_type: "claude", description: "ok" })
 })
 
-test("checkpoint 1: prompt over 8192 bytes is rejected", async () => {
-  await expectReject("task", { subagent_type: "claude", prompt: "x".repeat(8192) + "MARKER5", description: "ok" }, "MARKER5")
+test("checkpoint 1: prompt over 524288 bytes is rejected", async () => {
+  await expectReject("task", { subagent_type: "claude", prompt: "x".repeat(524288) + "MARKER5", description: "ok" }, "MARKER5")
 })
 
 test("checkpoint 1: description over 160 bytes is rejected", async () => {
@@ -67,11 +67,11 @@ test("checkpoint 1: description over 160 bytes is rejected", async () => {
 
 test("checkpoint 1 (v2 tool name): plain and at-cap subagent for claude are accepted", async () => {
   await run("subagent", { subagent_type: "claude", prompt: "Review the cache policy in src/cache.ts.", description: "Cache review" })
-  await run("subagent", { subagent_type: "claude", prompt: "a".repeat(8192), description: "d".repeat(160) })
+  await run("subagent", { subagent_type: "claude", prompt: "a".repeat(524288), description: "d".repeat(160) })
 })
 
 test("checkpoint 1 (v2 tool name): oversized subagent prompt is rejected", async () => {
-  await expectReject("subagent", { subagent_type: "claude", prompt: "x".repeat(8192) + "MARKER7", description: "ok" }, "MARKER7")
+  await expectReject("subagent", { subagent_type: "claude", prompt: "x".repeat(524288) + "MARKER7", description: "ok" }, "MARKER7")
 })
 
 test("checkpoint 1 (v2 tool name): non-ASCII subagent prompt is rejected", async () => {
@@ -95,7 +95,7 @@ test("checkpoint 2: extra parameters (cwd, timeout_ms) are rejected", async () =
 
 test("checkpoint 2: non-ASCII and over-cap acp_run prompts are rejected", async () => {
   await expectReject("acp_run", { agent: "claude", prompt: "MARKER6 评估" }, "MARKER6")
-  await expectReject("acp_run", { agent: "claude", prompt: "z".repeat(8193) })
+  await expectReject("acp_run", { agent: "claude", prompt: "z".repeat(524289) })
 })
 
 test("non-claude task/acp_run and other tools pass through untouched", async () => {
@@ -117,7 +117,7 @@ test("v2 hook enforces the native subagent agent selector", async () => {
     handler = cb
   } } })
   await handler({ tool: "subagent", input: { agent: "claude", prompt: "Review cache.", description: "Cache review" } })
-  await assert.rejects(() => handler({ tool: "subagent", input: { agent: "claude", prompt: "x".repeat(8193), description: "Review" } }), /limit is 8192/)
+  await assert.rejects(() => handler({ tool: "subagent", input: { agent: "claude", prompt: "x".repeat(524289), description: "Review" } }), /limit is 524288/)
   await assert.rejects(() => handler({ tool: "subagent", input: { agent: "claude", prompt: "评估", description: "Review" } }), /printable ASCII/)
   await handler({ tool: "subagent", input: { agent: "oracle", prompt: "评估", description: "Review" } })
 })
