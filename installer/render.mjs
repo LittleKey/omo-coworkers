@@ -48,16 +48,23 @@ export const GLOBAL_SKILL_DIR = "skills";
 // flavors: OpenCode auto-loads project plugins from `.opencode/plugins/` at
 // startup (official convention, https://opencode.ai/docs/plugins). Layout
 // subdirectories are not documented for plugin loading, so claude-advisor
-// ships as one loose file copied verbatim from plugins/claude-advisor/index.mjs
-// (guard.test.mjs is the plugin's own test suite and is not shipped). The
-// plugin is useful against an oh-my-opencode-slim 3.0.x host (its acp_run
-// guard protects a claude advisor dispatched via omo-slim); that omo-slim
-// requirement stays DOCUMENTED-ONLY — the installer never detects or gates
-// the omo-slim version.
+// ships as one loose file copied verbatim from plugins/claude-advisor/. The
+// entry was split by host generation in 2533227 — index.js carries the v2
+// plugin contract (default export {id, setup(ctx)}), index.v1.mjs the v1
+// tool.execute.before hook — so the payload source is selected BY HOST
+// FLAVOR while the managed path stays identical (guard.test.mjs is the
+// plugin's own test suite and is not shipped). The plugin is useful against
+// an oh-my-opencode-slim 3.0.x host (its acp_run guard protects a claude
+// advisor dispatched via omo-slim); that omo-slim requirement stays
+// DOCUMENTED-ONLY — the installer never detects or gates the omo-slim
+// version.
 export const PLUGIN_PAYLOAD = {
   kind: "plugin",
   path: ".opencode/plugins/claude-advisor.mjs",
-  source: "plugins/claude-advisor/index.mjs",
+  sourceByFlavor: {
+    v1: "plugins/claude-advisor/index.v1.mjs",
+    v2: "plugins/claude-advisor/index.js",
+  },
 };
 
 function sha256(buf) {
@@ -226,13 +233,14 @@ export function renderPlan({ packageRoot, host, overlay }) {
   const { files: skillFiles, skillIds } = collectSkillFiles(packageRoot, skillDir);
   files.push(...skillFiles);
 
-  // plugin payload: same managed path on either flavor (see PLUGIN_PAYLOAD)
+  // plugin payload: same managed path on either flavor; the SOURCE entry is
+  // selected by host flavor (see PLUGIN_PAYLOAD.sourceByFlavor)
   files.push({
     path: PLUGIN_PAYLOAD.path,
     action: "create",
     kind: PLUGIN_PAYLOAD.kind,
-    source: PLUGIN_PAYLOAD.source,
-    sha256: sha256(readFileSync(join(packageRoot, PLUGIN_PAYLOAD.source))),
+    source: PLUGIN_PAYLOAD.sourceByFlavor[host],
+    sha256: sha256(readFileSync(join(packageRoot, PLUGIN_PAYLOAD.sourceByFlavor[host]))),
   });
 
   return {

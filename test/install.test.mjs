@@ -531,12 +531,12 @@ test(`${host}: uninstall keeps a post-install-edited overlay instead of restorin
 });
 
 const PLUGIN_REL = ".opencode/plugins/claude-advisor.mjs";
-const PLUGIN_SOURCE_REL = join("plugins", "claude-advisor", "index.mjs");
+const pluginSourceRel = (host) => join("plugins", "claude-advisor", host === "v1" ? "index.v1.mjs" : "index.js");
 
 test(`${host}: claude-advisor plugin payload installs at the managed path with recorded hashes`, async () => {
   const target = makeTarget();
   try {
-    const sourceBytes = readFileSync(join(REPO_ROOT, PLUGIN_SOURCE_REL));
+    const sourceBytes = readFileSync(join(REPO_ROOT, pluginSourceRel(host)));
 
     const dry = await plan({ packageRoot: REPO_ROOT, target, host });
     const planned = dry.entries.find((e) => e.path === PLUGIN_REL);
@@ -549,7 +549,7 @@ test(`${host}: claude-advisor plugin payload installs at the managed path with r
     const pluginAbs = join(target, ".opencode", "plugins", "claude-advisor.mjs");
     assert.ok(existsSync(pluginAbs), "payload lands at .opencode/plugins/claude-advisor.mjs");
     assert.ok(!existsSync(join(target, ".opencode", "plugins", "guard.test.mjs")), "the plugin's own test file is not shipped");
-    assert.equal(readFileSync(pluginAbs).toString(), sourceBytes.toString(), "payload is a verbatim byte-copy of plugins/claude-advisor/index.mjs");
+    assert.equal(readFileSync(pluginAbs).toString(), sourceBytes.toString(), `payload is a verbatim byte-copy of ${pluginSourceRel(host)} for host ${host}`);
     const rec = manifest.files.find((f) => f.path === PLUGIN_REL);
     assert.ok(rec, "manifest records the plugin payload");
     assert.equal(rec.kind, "plugin");
@@ -600,7 +600,7 @@ test(`${host}: pre-existing unmanaged plugin file conflicts; --force takes over 
     assert.ok(existsSync(join(target, ".opencode", "omo-coworkers-install.json")), "manifest retained for reconciliation");
 
     // reconciled back to the recorded installed bytes: owner's original comes back byte-exact
-    writeFileSync(pluginAbs, readFileSync(join(REPO_ROOT, PLUGIN_SOURCE_REL)));
+    writeFileSync(pluginAbs, readFileSync(join(REPO_ROOT, pluginSourceRel(host))));
     const rb2 = rollback({ target });
     assert.ok(rb2.restored.includes(PLUGIN_REL), "owner's pre-install file restored");
     assert.equal(readFileSync(pluginAbs).toString(), ownerBody, "restored bytes are the recorded pre-install bytes");
@@ -627,7 +627,7 @@ test(`${host}: uninstall removes the unmodified plugin payload and prunes the cr
     assert.equal(driftResult.manifestRemoved, false, "manifest retained while entries are pending reconciliation");
 
     // reconciled: restore the installed bytes, uninstall completes
-    writeFileSync(pluginAbs, readFileSync(join(REPO_ROOT, PLUGIN_SOURCE_REL)));
+    writeFileSync(pluginAbs, readFileSync(join(REPO_ROOT, pluginSourceRel(host))));
     const result = uninstall({ target });
     assert.ok(result.removed.includes(PLUGIN_REL), "unmodified payload removed");
     assert.ok(!existsSync(pluginAbs));
