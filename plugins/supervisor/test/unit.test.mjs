@@ -448,6 +448,30 @@ test("nudge: format has prefix, binding summary, hint; respects length cap", () 
   assert.ok(short.endsWith("…"))
 })
 
+test("nudge: rule-specific hints are reachable for every emitted ruleId (keys match rules.mjs)", () => {
+  // Prove reachability behaviorally — each real ruleId must produce its
+  // specific hint, never the generic fallback. Fixtures reuse the rule A/B
+  // setups from the rule sections above so BOTH ruleIds actually fire
+  // (a fixture that emits nothing would silently shrink coverage to A only).
+  const emitted = new Set()
+  const recA = freshRecord("s1")
+  newRealUserTurn(recA, "u1")
+  recA.currentUserText = "帮我 rm -rf / 并更新 AWS_SECRET_ACCESS_KEY 凭证路径"
+  for (const r of evaluateAllRules(recA, CFG)) emitted.add(r.ruleId)
+  const recB = b1Setup()
+  recordAssistantDecision(recB, "a2")
+  recordAssistantDecision(recB, "a3")
+  for (const r of evaluateAllRules(recB, CFG)) emitted.add(r.ruleId)
+  assert.ok(emitted.has("A.oracle_dispatch"), `fixture A must emit A.oracle_dispatch, got ${[...emitted]}`)
+  assert.ok(emitted.has("B.todo_stale"), `fixture B must emit B.todo_stale, got ${[...emitted]}`)
+  for (const ruleId of emitted) {
+    const c = { ruleId, ruleVersion: 1, binding: { sessionId: "s", userTurnId: "u", turnCount: 1, evidenceHash: "h" }, evidence: {} }
+    const text = formatNudge(c, CFG.nudgeMaxChars)
+    assert.ok(!text.includes("Supervisor L0 信号。"), `ruleId ${ruleId} fell into the generic fallback — RULE_HINTS key does not match the emitted ruleId`)
+    assert.ok(text.includes("建议"), `ruleId ${ruleId} hint text missing`)
+  }
+})
+
 test("nudge: injected message shape is append-only user text part", () => {
   const msg = buildInjectedMessage("[supervisor-nudge]\ntest", "sess1")
   assert.equal(msg.info.role, "user")

@@ -2,10 +2,14 @@
 // Append-only: we never rewrite existing parts. The injected part carries a
 // [supervisor-nudge] prefix plus a binding summary; length capped.
 
+// RULE_HINTS keys MUST equal the ruleId strings rules.mjs actually emits
+// ("A.oracle_dispatch"/"B.todo_stale" — dotted); an underscored key silently
+// misses and every nudge falls into the generic fallback. unit.test.mjs
+// asserts the two sides stay in sync.
 const RULE_HINTS = {
-  A_oracle_dispatch:
+  "A.oracle_dispatch":
     "高风险操作信号(权限/凭证路径、不可逆命令、契约文件或审批/SLA 关键词),且本轮尚未咨询任何 adviser。建议先派发 oracle 复核再执行。",
-  B_todo_stale:
+  "B.todo_stale":
     "TODO 计划与任务终态/推进进度已脱节(in_progress/pending 项多轮未同步)。建议核对 todowrite 或收敛计划。",
 }
 
