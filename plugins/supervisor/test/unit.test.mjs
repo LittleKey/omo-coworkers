@@ -310,6 +310,34 @@ test("rule B2: dormant in_progress todo over 2 user turns", () => {
   assert.equal(r.evidence.turnsSince, 2)
 })
 
+// R29 Oracle review: the B2 contract is in_progress-only — a parked pending
+// item across user turns is backlog, not staleness. (Minimal repro of the
+// old defect: pending-only ledger used to fire dormant after 2 turns.)
+test("rule B2 contract: pending todo across 2 user turns never fires dormant", () => {
+  const rec = freshRecord("s1")
+  newRealUserTurn(rec, "u1")
+  recordTodowrite(rec, [{ id: "1", status: "pending" }])
+  newRealUserTurn(rec, "u2")
+  newRealUserTurn(rec, "u3")
+  assert.equal(evaluateRuleB(rec, CFG), null) // pending挂 2 回合 → 不命中
+})
+
+test("rule B2: dormancy counts in_progress only — mixed ledger reports in_progress count", () => {
+  const rec = freshRecord("s1")
+  newRealUserTurn(rec, "u1")
+  recordTodowrite(rec, [
+    { id: "1", status: "in_progress" },
+    { id: "2", status: "pending" },
+    { id: "3", status: "pending" },
+  ])
+  newRealUserTurn(rec, "u2")
+  newRealUserTurn(rec, "u3")
+  const r = evaluateRuleB(rec, CFG)
+  assert.equal(r.kind, "hit")
+  assert.equal(r.evidence.sub, "dormant")
+  assert.equal(r.evidence.openItems, 1, "evidence counts the in_progress item, not pending ones")
+})
+
 test("rule B: no open todo items → null", () => {
   const rec = freshRecord("s1")
   newRealUserTurn(rec, "u1")

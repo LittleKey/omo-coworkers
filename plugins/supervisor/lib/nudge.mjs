@@ -10,7 +10,7 @@ const RULE_HINTS = {
   "A.oracle_dispatch":
     "高风险操作信号(权限/凭证路径、不可逆命令、契约文件或审批/SLA 关键词),且本轮尚未咨询任何 adviser。建议先派发 oracle 复核再执行。",
   "B.todo_stale":
-    "TODO 计划与任务终态/推进进度已脱节(in_progress/pending 项多轮未同步)。建议核对 todowrite 或收敛计划。",
+    "TODO 计划可能需要核对:按时间启发式,in_progress/pending 项已多轮未同步 todowrite(尚未证明计划确有错误)。建议核对 todowrite 或收敛计划。",
 }
 
 export function formatNudge(candidate, maxChars, evidenceMaxChars = 200) {
