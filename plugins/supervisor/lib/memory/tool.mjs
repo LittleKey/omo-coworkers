@@ -141,7 +141,14 @@ export function buildReportCorrectionTool({ cfg }) {
     description: FROZEN_TOOL_DESCRIPTION,
     input: INPUT_SCHEMA,
     options: { codemode: false },
-    execute: (args, context) => executeReportCorrection(args, context, { cfg }),
+    // Host tool convention (verified m1-p0): the model-facing result comes from
+    // result.content; without it the host renders literal "undefined". Keep the
+    // structured fields (tests + programmatic callers) and add `content` with
+    // the verbatim JSON serialization for the model.
+    execute: async (args, context) => {
+      const res = await executeReportCorrection(args, context, { cfg })
+      return { ...res, content: JSON.stringify(res) }
+    },
   }
 }
 
