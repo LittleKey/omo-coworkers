@@ -89,6 +89,82 @@ binding before appending.
   the log, zero model-visible behavior.
 - Phase two = `mode: "inject"` — the single minimal L0 intervention.
 
+## Memory (supervisor-memory M1, P1 store)
+
+`lib/memory/store.mjs` is the unified memory store for supervisor-memory
+(m1-plan: `docs/supervisor-memory-m1-plan.md`, design:
+`docs/supervisor-memory-design.md`). Pure file storage, zero external
+dependencies, plain ESM (`.mjs`), runnable under both Bun (plugin runtime)
+and node ≥ 20 (CLI/tests).
+
+### Unified root
+
+Everything lives under **one** directory:
+
+```
+~/.local/share/opencode-supervisor/memory/
+  rules.json       active + disabled rules (versioned, scope, approvalRef)
+  issues.json      correction candidates + human triage state
+  events.jsonl     correction events with evidence snapshots (append-only)
+  decisions.jsonl  approve / reject / disable / enable records (append-only)
+  projects.json    host project ids, human aliases, confirmed directories
+  digest/          derived views only (never authoritative)
+```
+
+**Backup = copy this one directory.** v1 has no rebuild command; the only
+recovery for a damaged store is restoring a backup. The store must not be
+re-created behind the tools' back: a missing store is an error, not a fresh
+install. First-time creation is explicit:
+
+```sh
+node -e 'import("./plugins/supervisor/lib/memory/store.mjs").then(m => m.initStore())'
+```
+
+`initStore()` creates the directory with mode `0700` and every file with mode
+`0600`, plus an empty skeleton and a committed marker.
+
+### Sensitivity
+
+Correction events embed **verbatim excerpts of real session messages** (short
+evidence snapshots with timestamps and source references). Treat the whole
+directory as sensitive session content: `0600`/`0700` permissions are a hard
+requirement (the doctor refuses to run healthy against looser modes), and
+backups inherit the same sensitivity.
+
+### Failure behavior (fail-closed, decision D5)
+
+- All writes go through a single whole-store lock and a fixed cross-file
+  commit order: `decisions.jsonl` → state files → `commit.marker`
+  (pending → committed, with per-file expected sha256). A crash mid-commit
+  leaves a detectable incomplete state.
+- On reopen, an incomplete commit **closes all authorization outputs**: no
+  publishing, no cleanup patches, no state changes. The diff (which files
+  landed, which did not) is reported for human review and stays visible until
+  a human resolves it.
+- Corrupt files, truncated logs, unknown schema versions, permission errors,
+  live lock conflicts, or a missing store → the operation is refused. The
+  store never re-roots itself elsewhere, never auto-repairs, never rebuilds
+  `active` rules from historical approvals, and never overwrites on a lock
+  conflict (multi-instance safe: second writer fails with `STORE_LOCKED`).
+- A live lock holder (fresh heartbeat from a running process) blocks writers
+  until the timeout; a provably dead holder (dead PID / stale heartbeat) is
+  recovered automatically after a short grace period.
+- Diagnostics: `store.doctor()` is a read-only health check (file presence,
+  parse, schema, marker-vs-content seq, permissions, lock state, incomplete
+  commits). CLI commands must surface its findings instead of acting.
+
+### Tests
+
+```sh
+node --test test/unit.test.mjs test/v2-context.test.mjs test/store.test.mjs
+```
+
+`test/store.test.mjs` covers the full T4 fault matrix (missing/corrupt/
+truncated/permission/lock/unknown-schema rejection, per-operation crash
+injection over every transaction-checklist step, idempotency, lock
+recovery/refusal, init permissions) — always against temp directories; the
+real `~/.local/share/opencode-supervisor/` is never touched.
+
 ## Tests
 
 ```sh
