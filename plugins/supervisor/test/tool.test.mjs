@@ -76,6 +76,9 @@ function createHostDb(t) {
   addMsg("msg_user_a1", "ses_root_a", "user", "prefer const over let in this repo")
   addMsg("msg_assist_a1", "ses_root_a", "assistant", "assistant text a1")
   addMsg("msg_long_a", "ses_root_a", "user", "x".repeat(5000))
+  // the "triggering" current-turn user message in the calling session —
+  // inserted last so ORDER BY rowid DESC (current-turn fallback) picks it
+  addMsg("msg_trigger_a", "ses_root_a", "user", "请记住这个纠正")
 
   addSession("ses_root_a2", PROJ_A, null)
   addMsg("msg_user_a2", "ses_root_a2", "user", "cross-session same-project correction")
@@ -88,6 +91,10 @@ function createHostDb(t) {
 
   // root session whose host row carries no project identity (fail-closed case)
   addSession("ses_noproj", null, null)
+
+  // root session with NO user message (current-turn fallback must fail-closed)
+  addSession("ses_nouser", PROJ_A, null)
+  addMsg("msg_assist_nouser", "ses_nouser", "assistant", "assistant-only session")
 
   db.close()
   return dbPath
@@ -193,6 +200,7 @@ test("T2 same-project cross-session user message → accepted, recorded in real 
   assert.match(res.issueId, /^ISS-/)
   assert.match(res.eventId, /^EVT-/)
   assert.equal(typeof res.note, "string")
+  assert.equal(res.evidenceVia, "explicit-ids")
   assert.ok(!("mock" in res), "non-mock receipt must not carry mock flag")
 
   const store = openStore(storeRoot, QUICK)
@@ -365,11 +373,68 @@ test("T2 evidence arg shape violations → rejected", async (t) => {
   const storeRoot = makeStoreRoot(t)
   const { tool } = await registeredTool(t, { dbPath, storeRoot })
   const call = (evidence) => tool.execute({ description: "x", evidence }, { sessionID: "ses_root_a" })
-  expectReject(await call([]), "1..3")
+  // (note: [] and "" now mean "omitted" → current-turn fallback, covered by
+  // the fallback tests below — they are no longer shape violations)
   expectReject(await call(["a", "b", "c", "d"]), "1..3")
   expectReject(await call([42]), "1..3")
-  expectReject(await call(""), "1..3")
   expectReject(await tool.execute({ description: "   ", evidence: "msg_user_a1" }, { sessionID: "ses_root_a" }), "description")
+})
+
+// ---------- T2 current-turn fallback (AMENDMENT, live m01516) ----------
+
+test("T2 fallback: evidence omitted → triggering current-turn user message recorded", async (t) => {
+  const dbPath = createHostDb(t)
+  const storeRoot = makeStoreRoot(t)
+  const { tool } = await registeredTool(t, { dbPath, storeRoot })
+  const res = await tool.execute({ description: "记住这次纠正" }, { sessionID: "ses_root_a" })
+  assert.equal(res.ack, true)
+  assert.equal(res.evidenceVia, "current-turn-fallback")
+  const events = openStore(storeRoot, QUICK).listEvents()
+  assert.equal(events.length, 1)
+  assert.equal(events[0].source.messageId, "msg_trigger_a", "fallback must target the latest user row")
+  assert.equal(events[0].source.sessionId, "ses_root_a")
+})
+
+test("T2 fallback: unresolvable ACP refs (evidence=[\"m00001\"]) → triggering message recorded", async (t) => {
+  const dbPath = createHostDb(t)
+  const storeRoot = makeStoreRoot(t)
+  const { tool } = await registeredTool(t, { dbPath, storeRoot })
+  const res = await tool.execute({ description: "记住这次纠正", evidence: ["m00001"] }, { sessionID: "ses_root_a" })
+  assert.equal(res.ack, true)
+  assert.equal(res.evidenceVia, "current-turn-fallback")
+  const events = openStore(storeRoot, QUICK).listEvents()
+  assert.equal(events.length, 1)
+  assert.equal(events[0].source.messageId, "msg_trigger_a")
+})
+
+test("T2 fallback: unresolvable NON-ref garbage → hard reject, no silent fallback", async (t) => {
+  const dbPath = createHostDb(t)
+  const storeRoot = makeStoreRoot(t)
+  const { tool } = await registeredTool(t, { dbPath, storeRoot })
+  const res = await tool.execute({ description: "x", evidence: ["garbage-not-a-ref"] }, { sessionID: "ses_root_a" })
+  expectReject(res, "garbage-not-a-ref")
+  assert.equal(openStore(storeRoot, QUICK).listEvents().length, 0)
+})
+
+test("T2 fallback: mixed unresolvable ref + valid id → hard reject (no fallback)", async (t) => {
+  const dbPath = createHostDb(t)
+  const storeRoot = makeStoreRoot(t)
+  const { tool } = await registeredTool(t, { dbPath, storeRoot })
+  const res = await tool.execute(
+    { description: "x", evidence: ["m00001", "msg_user_a2"] },
+    { sessionID: "ses_root_a" },
+  )
+  expectReject(res, "m00001")
+  assert.equal(openStore(storeRoot, QUICK).listEvents().length, 0)
+})
+
+test("T2 fallback: session without any user message → rejected fail-closed", async (t) => {
+  const dbPath = createHostDb(t)
+  const storeRoot = makeStoreRoot(t)
+  const { tool } = await registeredTool(t, { dbPath, storeRoot })
+  const res = await tool.execute({ description: "x" }, { sessionID: "ses_nouser" })
+  expectReject(res, "触发用户消息")
+  assert.equal(openStore(storeRoot, QUICK).listEvents().length, 0)
 })
 
 test("T2 excerpt truncated to EVIDENCE_MAX_CHARS", async (t) => {
