@@ -11,8 +11,9 @@
 // whole, never truncated) → the whole call is rejected.
 //
 // Description lint (III.0): every sentence is an object-semantics, input,
-// effect, or failure statement. Amendment trail: initial text 2026-10-23,
-// no recorded corrections yet.
+// effect, or failure statement. Amendment trail: initial text 2026-10-23;
+// same day, translated to English (R26 three-part format, user request
+// m01908) — semantics unchanged, no recorded corrections.
 import { countBodyLines, BODY_MAX_LINES } from "./cli/patch.mjs"
 import { saveDraft } from "./cli/views.mjs"
 import { gateSession, openStoreFor, storeOpenError, writeMockReceipt } from "./common.mjs"
@@ -20,21 +21,21 @@ import { gateSession, openStoreFor, storeOpenError, writeMockReceipt } from "./c
 export const DRAFT_TOOL_NAME = "draft_rule"
 
 export const TOOL_DESCRIPTION =
-  "为一个已存在的问题候选起草规则正文, 只写草稿态。" +
-  "输入: issueId(候选 ID, 必须存在、属于当前项目且状态为 draft), body(规则正文, 上限 10 行)。" +
-  "效果: 正文写入草稿视图(digest/drafts.json), 不产生任何批准、授权或状态变更; 草稿变更不影响已有决策。" +
-  "失败行为: 候选不存在、属于其他项目、非 draft 状态或正文为空/超过 10 行时, 本次调用整体拒绝。"
+  "Drafts a rule body for one existing issue candidate; writes draft state only. " +
+  "Input: issueId (must exist, belong to the current project, and have draft status) and body (rule text, max 10 lines). " +
+  "Effect: the body lands in the draft view (digest/drafts.json); produces no approval, authorization, or status change; draft changes never affect existing decisions. " +
+  "Failure: unknown issue, other project's issue, non-draft status, or an empty/over-10-line body rejects the whole call."
 
 const INPUT_SCHEMA = {
   type: "object",
   properties: {
     issueId: {
       type: "string",
-      description: "已有问题候选 ID; 必须存在、属于当前项目且状态为 draft",
+      description: "Existing issue candidate ID; must exist, belong to the current project, and have draft status",
     },
     body: {
       type: "string",
-      description: "规则正文; 上限 10 行, 超行整体拒绝(不截断)",
+      description: "Rule body text; max 10 lines — an oversize body rejects the whole call (never truncated)",
     },
   },
   required: ["issueId", "body"],

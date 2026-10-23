@@ -9,17 +9,18 @@
 // review entry point is the supervisor-memory CLI digest command.
 //
 // Description lint (III.0): object semantics / effect / failure statements
-// only. Amendment trail: initial text 2026-10-23, no recorded corrections
-// yet.
+// only. Amendment trail: initial text 2026-10-23; same day, translated to
+// English (R26 three-part format, user request m01908) — semantics
+// unchanged, no recorded corrections yet.
 import { gateSession, openStoreFor, storeOpenError } from "./common.mjs"
 
 export const MEMORY_STATUS_TOOL_NAME = "memory_status"
 
 export const TOOL_DESCRIPTION =
-  "只读查看当前项目的记忆状态, 无输入。" +
-  "效果: 返回当前项目与全局生效规则的列表(id、一句话摘要、状态、版本)及待审候选数量; 不包含其他项目的数据, 不包含审批流细节。" +
-  "人审入口是 supervisor-memory CLI 的 digest 命令。" +
-  "失败行为: 存储未初始化或不可读时返回明确错误, 不自动建库。"
+  "Read-only view of the current project's memory state; no input. " +
+  "Effect: returns the current project's and user-global active rules (id, one-line summary, status, version) plus pending candidate counts; contains no other projects' data and no approval-flow details. " +
+  "Human review entry point: the supervisor-memory CLI digest command. " +
+  "Failure: an uninitialized or unreadable store returns an explicit error; the database is never auto-created."
 
 const INPUT_SCHEMA = { type: "object", properties: {}, additionalProperties: false }
 

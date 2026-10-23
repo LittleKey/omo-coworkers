@@ -16,8 +16,9 @@
 // No confirmed/approved parameter exists (III.1: confirmation is a host
 // event, never a model-supplied argument).
 // Description lint (III.0): object semantics / input / effect / failure
-// statements only. Amendment trail: initial text 2026-10-23, no recorded
-// corrections yet.
+// statements only. Amendment trail: initial text 2026-10-23; same day,
+// translated to English (R26 three-part format, user request m01908) —
+// semantics unchanged, no recorded corrections.
 import fs from "node:fs"
 import os from "node:os"
 
@@ -29,17 +30,17 @@ import { gateSession, openStoreFor, storeOpenError } from "./common.mjs"
 export const PREPARE_PUBLISH_TOOL_NAME = "prepare_publish"
 
 export const TOOL_DESCRIPTION =
-  "为一个已批准的规则生成其应用补丁文本; 对目标文件零写入。" +
-  "输入: ruleId(规则 ID, 必须处于已批准状态且有对应的批准决定记录)。" +
-  "效果: 返回补丁块全文与目标路径; 补丁未被应用, 应用需人工(或人授权的 agent)粘贴/写入; 本工具不登记发布状态, 在场确认由人审 CLI 的只读检查完成。" +
-  "失败行为: 规则不存在、未批准、已停用、无已登记目标, 或目标不满足发布条件(文件缺失/目录未确认/与已批准范围不一致/目标内容已变更)时, 拒绝并说明原因。"
+  "Generates the apply-patch text for one approved rule; zero writes to target files. " +
+  "Input: ruleId (must be approved, with a matching approval decision record). " +
+  "Effect: returns the full patch block and target path; the patch is NOT applied — applying requires a human (or human-authorized agent) to paste/write it; the tool performs no publish registration, and in-place confirmation is the human-review CLI digest read-only check. " +
+  "Failure: unknown, unapproved, or disabled rule; no registered targets; or a target failing publish conditions (missing file, unconfirmed directory, outside the approved scope, changed target content) rejects with the reason."
 
 const INPUT_SCHEMA = {
   type: "object",
   properties: {
     ruleId: {
       type: "string",
-      description: "规则 ID (RUL-…); 必须已批准且有对应的批准决定记录",
+      description: "Rule ID (RUL-…); must be approved with a matching approval decision record",
     },
   },
   required: ["ruleId"],
