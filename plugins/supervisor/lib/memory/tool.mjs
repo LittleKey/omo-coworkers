@@ -56,8 +56,18 @@ import os from "node:os"
 import path from "node:path"
 import { randomBytes } from "node:crypto"
 
-import { openStore, StoreError, defaultMemoryRoot, TITLE_MAX_CHARS } from "./store.mjs"
-import { defaultHostDbPath, openHostDbReadOnly, validateEvidence } from "./evidence.mjs"
+import { TITLE_MAX_CHARS } from "./store.mjs"
+import { validateEvidence, openHostDbReadOnly } from "./evidence.mjs"
+import { buildDraftRuleTool } from "./draft.mjs"
+import { buildPreparePublishTool } from "./publish.mjs"
+import { buildMemoryStatusTool } from "./view.mjs"
+import {
+  checkCurrentSession,
+  gateSession,
+  openStoreFor,
+  storeOpenError,
+  writeMockReceipt,
+} from "./common.mjs"
 
 export const TOOL_NAME = "report_correction"
 
@@ -113,16 +123,18 @@ export function resolveMemoryOptions(options) {
 }
 
 /** Isolated directory for mock receipts — never the production store root. */
-export function defaultMockDir() {
-  return path.join(os.tmpdir(), "opencode-supervisor-memory-mock")
-}
+export { defaultMockDir } from "./common.mjs"
 
 /**
- * Register the memory tool on the v2 plugin surface. Returns
- * {registered:boolean, ...}. Default OFF → {registered:false} and the host
- * tool surface is untouched. Registration failures are logged via the
- * provided `log` callback (if any) and swallowed — the existing supervisor
- * behavior must never be affected (D1 fault isolation).
+ * Register the memory tool face (P2 report_correction + v6.0 Part III step 1a
+ * draft_rule / prepare_publish / memory_status) on the v2 plugin surface.
+ * Returns {registered:boolean, tools?:string[]}. Default OFF →
+ * {registered:false} and the host tool surface is untouched. Registration
+ * failures are logged via the provided `log` callback (if any) and swallowed —
+ * the existing supervisor behavior must never be affected (D1 fault
+ * isolation). All four tools register together or not at all: the enable gate
+ * and the codemode:false option are per-tool identical, so a partial surface
+ * would only mislead (III.1: the primitives form one face).
  */
 export async function registerMemoryTool(ctx, { log } = {}) {
   const cfg = resolveMemoryOptions(ctx?.options)
@@ -133,10 +145,14 @@ export async function registerMemoryTool(ctx, { log } = {}) {
     if (!ctx?.tool || typeof ctx.tool.transform !== "function" || typeof ctx.tool.reload !== "function") {
       throw new Error("host tool surface unavailable (ctx.tool.transform/reload missing)")
     }
-    const tool = buildReportCorrectionTool({ cfg, ctx })
-    ctx.tool.transform((editor) => editor.add(tool))
+    const tools = buildMemoryTools({ cfg })
+    // One editor.add per transform, each in the exact P0-verified shape;
+    // a single reload publishes the whole face.
+    for (const tool of tools) {
+      ctx.tool.transform((editor) => editor.add(tool))
+    }
     await ctx.tool.reload()
-    return { registered: true }
+    return { registered: true, tools: tools.map((t) => t.name) }
   } catch (err) {
     try {
       log?.({ kind: "internal_error", where: "memory.register", error: String(err?.message ?? err) })
@@ -145,6 +161,16 @@ export async function registerMemoryTool(ctx, { log } = {}) {
     }
     return { registered: false, error: String(err?.message ?? err) }
   }
+}
+
+/** All memory tools in registration order (report_correction first). */
+export function buildMemoryTools({ cfg }) {
+  return [
+    buildReportCorrectionTool({ cfg }),
+    buildDraftRuleTool({ cfg }),
+    buildPreparePublishTool({ cfg }),
+    buildMemoryStatusTool({ cfg }),
+  ]
 }
 
 /** The editor.add() payload for report_correction (P0 A1 shape). */
@@ -166,43 +192,8 @@ export function buildReportCorrectionTool({ cfg }) {
 }
 
 // ---------- execute-time helpers ----------
-
-// Session identity of the CURRENT session at execute time (host fact: the
-// execute context has no parent/project info, and the registration ctx's
-// location is the plugin instance's load location, not the session's — see
-// the header note). One read-only host DB lookup yields both the root/subagent
-// discriminator (parent_id) and the project identity (project_id).
-const SESSION_SQL = "SELECT id, parent_id, project_id FROM session_v2 WHERE id = ?"
-
-function checkCurrentSession({ dbPath, sessionID }) {
-  let db
-  let row
-  try {
-    if (!fs.existsSync(dbPath)) {
-      return { ok: false, reason: `host database not found at ${dbPath} — cannot verify root/subagent session, refusing (fail-closed)` }
-    }
-    db = openHostDbReadOnly(dbPath)
-    row = db.prepare(SESSION_SQL).get(sessionID)
-  } catch (err) {
-    return { ok: false, reason: `host database read failed: ${err?.message ?? err} — refusing (fail-closed)` }
-  } finally {
-    try {
-      db?.close()
-    } catch {
-      /* ignore */
-    }
-  }
-  if (!row) {
-    return { ok: false, reason: `current session ${sessionID} is not in the host database — refusing (fail-closed)` }
-  }
-  if (row.parent_id !== null && row.parent_id !== undefined) {
-    return { ok: false, reason: "当前会话是子会话 (parent_id 非 null); report_correction 只能在根会话使用" }
-  }
-  if (typeof row.project_id !== "string" || row.project_id.length === 0) {
-    return { ok: false, reason: "当前会话缺少项目身份 (session_v2.project_id 为空) — 拒绝 (fail-closed)" }
-  }
-  return { ok: true, projectId: row.project_id }
-}
+// Session/host-DB/store/mock helpers live in common.mjs (shared with the
+// step-1a tool modules draft/publish/view, which must not import tool.mjs).
 
 // Current-turn fallback (AMENDMENT, live m01516): the billion-context proxy
 // rewrites model-visible message ids into ACP refs, so the model cannot cite
@@ -252,26 +243,10 @@ function normalizeEvidenceIds(evidence) {
   return null
 }
 
-function openStoreFor(cfg) {
-  return openStore(cfg.storeRoot ?? defaultMemoryRoot())
-}
+// openStoreFor moved to common.mjs
 
 /** Human-facing hint for a closed/unavailable store (never auto-init). */
-function storeOpenError(err) {
-  if (err instanceof StoreError && err.code === "STORE_MISSING") {
-    return "memory store 未初始化 — 请先运行 supervisor-memory CLI 的 init 命令(缺失的库不会被自动创建)"
-  }
-  const code = err instanceof StoreError ? err.code : "UNKNOWN"
-  return `memory store 打开失败 (${code}): ${err?.message ?? err} — 本次拒绝(fail-closed)`
-}
-
-function writeMockReceipt(mockDir, receipt) {
-  const dir = mockDir ?? defaultMockDir()
-  fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
-  const safeSession = String(receipt.sessionId).replace(/[^A-Za-z0-9_-]/g, "_")
-  const file = path.join(dir, `${safeSession}.jsonl`)
-  fs.appendFileSync(file, JSON.stringify(receipt) + "\n", { mode: 0o600 })
-}
+// storeOpenError moved to common.mjs
 
 /**
  * Tool execute. Never throws — every failure path returns {ok:false, error}.
@@ -293,14 +268,11 @@ async function runReportCorrection(rawArgs, context, { cfg }) {
   // ① the current session must be a root session, and its host-DB row
   // carries the project identity (instance ctx.location is NOT the session's
   // location — see the header note; model arguments are never trusted either).
-  const sessionID = context?.sessionID
-  if (typeof sessionID !== "string" || sessionID.length === 0) {
-    return { ok: false, error: "缺少会话标识, 无法判定根/子会话 — 拒绝 (fail-closed)" }
-  }
-  const dbPath = cfg.dbPath ?? defaultHostDbPath()
-  const session = checkCurrentSession({ dbPath, sessionID })
-  if (!session.ok) return { ok: false, error: session.reason }
-  const projectId = session.projectId
+  const gate = gateSession(context, cfg)
+  if (!gate.ok) return { ok: false, error: gate.error }
+  const sessionID = gate.sessionID
+  const projectId = gate.projectId
+  const dbPath = gate.dbPath
 
   // Argument shape.
   const description = typeof args.description === "string" ? args.description.trim() : ""

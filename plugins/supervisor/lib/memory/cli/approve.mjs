@@ -15,7 +15,7 @@ import fs from "node:fs"
 import path from "node:path"
 import { canonicalJson, sha256Hex } from "../store.mjs"
 import { candidateTargets, whyTarget } from "./targets.mjs"
-import { generatePatch, formatPatch, countBodyLines, BODY_MAX_LINES } from "./patch.mjs"
+import { formatRulePatch, generatePatch, countBodyLines, BODY_MAX_LINES } from "./patch.mjs"
 import { readDrafts } from "./views.mjs"
 
 /** Store-state fingerprint captured at stage 2 and re-verified at stage 3 (T3). */
@@ -305,13 +305,20 @@ export async function runApprove(ctx, id) {
   }
 
   // Regenerate with the real rule id (new rules got one just now), then print.
+  // formatRulePatch = the shared generate+format composition (step-1a: the
+  // prepare_publish tool uses the exact same two calls, so tool and CLI patch
+  // text are byte-identical by construction).
   const patches = targetContexts.map((tc) =>
-    formatPatch({
+    formatRulePatch({
       targetPath: tc.path,
       why: whyTarget(tc.candidate),
       scopePromise: describeScope(scope),
-      tracked: tc.candidate.note,
-      patch: generatePatch(tc.content, { ruleId: newRule.id, version: newRule.version, body, previous }),
+      trackedNote: tc.candidate.note,
+      fileContent: tc.content,
+      ruleId: newRule.id,
+      version: newRule.version,
+      body,
+      previous,
     }),
   )
 

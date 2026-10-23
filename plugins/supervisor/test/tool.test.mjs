@@ -502,19 +502,26 @@ test("T1 memory.enable off (default) → not registered, tool surface untouched"
   }
 })
 
-test("T1 memory.enable on → registered once with codemode:false, reload called", async (t) => {
+test("T1 memory.enable on → the four-tool face registered, each codemode:false, one reload", async (t) => {
   const dbPath = createHostDb(t)
   const { ctx, state } = makeCtx({ memory: { enable: true, dbPath } })
   const res = await registerMemoryTool(ctx)
   assert.equal(res.registered, true)
-  assert.equal(state.transformCalls, 1)
+  assert.deepEqual(res.tools, ["report_correction", "draft_rule", "prepare_publish", "memory_status"])
+  assert.equal(state.transformCalls, 4)
   assert.equal(state.reloaded, 1)
-  assert.equal(state.added.length, 1)
-  const tool = state.added[0]
-  assert.equal(tool.name, TOOL_NAME)
-  assert.equal(tool.description, FROZEN_TOOL_DESCRIPTION)
-  assert.deepEqual(tool.options, { codemode: false })
-  assert.equal(typeof tool.execute, "function")
+  assert.equal(state.added.length, 4)
+  assert.deepEqual(
+    state.added.map((tl) => tl.name),
+    ["report_correction", "draft_rule", "prepare_publish", "memory_status"],
+  )
+  for (const tool of state.added) {
+    assert.deepEqual(tool.options, { codemode: false })
+    assert.equal(typeof tool.description, "string")
+    assert.equal(typeof tool.execute, "function")
+  }
+  const report = state.added.find((tl) => tl.name === TOOL_NAME)
+  assert.equal(report.description, FROZEN_TOOL_DESCRIPTION)
 })
 
 test("T1 resolveMemoryOptions: only ===true enables; unknown keys ignored", () => {

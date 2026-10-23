@@ -1,0 +1,194 @@
+// prepare_publish — model tool face, v6.0 design Part III step 1a (§III.1
+// row 3; named prepare_publish precisely because it does NOT publish: zero
+// file writes). For an APPROVED rule (status active + a matching approve
+// decision in the store) it regenerates the apply-patch text with the exact
+// same shared composition the CLI approve printer uses (cli/patch.mjs
+// formatRulePatch → generatePatch + formatPatch), so tool output is
+// byte-identical to what a fresh CLI approval prints for the same object.
+//
+// Boundaries (III.1): the receipt always states the patch is NOT applied;
+// the tool performs NO publish registration — the D9 in-place confirmation
+// stays a read-only check of the human CLI digest. D8 target conditions are
+// re-verified from current state (file exists, directory confirmed, target
+// within the approved scope); any drift → reject with the reason (target
+// changed → human review, fail-closed).
+//
+// No confirmed/approved parameter exists (III.1: confirmation is a host
+// event, never a model-supplied argument).
+// Description lint (III.0): object semantics / input / effect / failure
+// statements only. Amendment trail: initial text 2026-10-23, no recorded
+// corrections yet.
+import fs from "node:fs"
+import os from "node:os"
+
+import { formatRulePatch, PatchError } from "./cli/patch.mjs"
+import { candidateTargets, whyTarget } from "./cli/targets.mjs"
+import { describeScope } from "./cli/approve.mjs"
+import { gateSession, openStoreFor, storeOpenError } from "./common.mjs"
+
+export const PREPARE_PUBLISH_TOOL_NAME = "prepare_publish"
+
+export const TOOL_DESCRIPTION =
+  "为一个已批准的规则生成其应用补丁文本; 对目标文件零写入。" +
+  "输入: ruleId(规则 ID, 必须处于已批准状态且有对应的批准决定记录)。" +
+  "效果: 返回补丁块全文与目标路径; 补丁未被应用, 应用需人工(或人授权的 agent)粘贴/写入; 本工具不登记发布状态, 在场确认由人审 CLI 的只读检查完成。" +
+  "失败行为: 规则不存在、未批准、已停用、无已登记目标, 或目标不满足发布条件(文件缺失/目录未确认/与已批准范围不一致/目标内容已变更)时, 拒绝并说明原因。"
+
+const INPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    ruleId: {
+      type: "string",
+      description: "规则 ID (RUL-…); 必须已批准且有对应的批准决定记录",
+    },
+  },
+  required: ["ruleId"],
+  additionalProperties: false,
+}
+
+export function buildPreparePublishTool({ cfg }) {
+  return {
+    name: PREPARE_PUBLISH_TOOL_NAME,
+    description: TOOL_DESCRIPTION,
+    input: INPUT_SCHEMA,
+    options: { codemode: false },
+    execute: async (args, context) => {
+      const res = await executePreparePublish(args, context, { cfg })
+      return { ...res, content: JSON.stringify(res) }
+    },
+  }
+}
+
+/** Never throws; every failure path returns {ok:false, error}. */
+export async function executePreparePublish(rawArgs, context, { cfg }) {
+  try {
+    return await runPreparePublish(rawArgs, context, { cfg })
+  } catch (err) {
+    return { ok: false, error: `prepare_publish 内部错误: ${err?.message ?? err}` }
+  }
+}
+
+/**
+ * The previous version a replace-patch replaces. Store facts (P1, unchanged
+ * semantics): a FIRST approval is recorded with decision.ruleId = null (the
+ * rule id is minted inside the transaction); re-approvals carry the rule id.
+ * So the current decision is matched via rule.approvalRef.decisionId over ALL
+ * approve decisions, and the previous body comes from the approve decision
+ * before the current one in this rule's chain — for version 2 that is the
+ * minting decision (last ruleId-null approve before current). A wrong guess
+ * cannot yield a wrong patch: generatePatch cross-checks the claimed
+ * previous body against the target segment and fails closed to human review.
+ * version 1 → null (first-time add). No recoverable predecessor → null;
+ * generatePatch then fails closed if the target already carries a segment.
+ */
+function previousVersionOf(rule, reApprovals, mint) {
+  if (rule.version <= 1) return null
+  const prev = reApprovals[reApprovals.length - 2]
+  if (prev) return { version: rule.version - 1, body: prev.object?.body }
+  if (rule.version === 2 && mint) return { version: 1, body: mint.object?.body }
+  return null
+}
+
+async function runPreparePublish(rawArgs, context, { cfg }) {
+  const args = rawArgs && typeof rawArgs === "object" ? rawArgs : {}
+
+  const gate = gateSession(context, cfg)
+  if (!gate.ok) return { ok: false, error: gate.error }
+
+  const ruleId = typeof args.ruleId === "string" ? args.ruleId.trim() : ""
+  if (ruleId.length === 0) {
+    return { ok: false, error: "ruleId 必须是规则 ID 字符串 (RUL-…)" }
+  }
+
+  let store
+  try {
+    store = openStoreFor(cfg)
+  } catch (err) {
+    return { ok: false, error: storeOpenError(err) }
+  }
+
+  const rule = store.getRule(ruleId) // throws (fail-closed) on damaged stores
+  if (!rule) {
+    return { ok: false, error: `拒绝: 规则 ${ruleId} 不存在` }
+  }
+  if (rule.status === "disabled") {
+    return { ok: false, error: `拒绝: 规则 ${ruleId} 已停用; 重新启用需要全新的审批, 不经本工具` }
+  }
+  if (rule.status !== "active" || !rule.approvalRef) {
+    return { ok: false, error: `拒绝: 规则 ${ruleId} 未处于已批准状态(当前 ${rule.status})` }
+  }
+  // listDecisions({ruleId}) cannot find a v1 rule's approving decision
+  // (first approvals carry decision.ruleId = null — store semantics), so the
+  // current decision is matched via approvalRef over all approve decisions.
+  const approves = store.listDecisions({ kind: "approve" })
+  const current = approves.find((d) => d.id === rule.approvalRef?.decisionId)
+  if (!current) {
+    return { ok: false, error: `拒绝: 未找到与规则 ${ruleId} 当前版本对应的批准决定记录` }
+  }
+  const reApprovals = approves.filter((d) => d.ruleId === ruleId)
+  const mint = approves
+    .filter((d) => d.ruleId === null && d.seq < current.seq)
+    .at(-1)
+
+  const targets = Array.isArray(rule.targets) ? rule.targets : []
+  if (targets.length === 0) {
+    return { ok: false, error: `拒绝: 规则 ${ruleId} 无已登记目标(从未发布); 目标在人工审批(approve)时确定` }
+  }
+
+  // D8 re-verification from CURRENT state: every registered target must
+  // still be an in-scope candidate that exists, with a confirmed directory.
+  const candidates = candidateTargets({
+    scope: rule.scope,
+    projects: store.listProjects(),
+    cwd: null, // the tool face never widens scope via an unregistered cwd
+    home: os.homedir(),
+  })
+  const previous = previousVersionOf(rule, reApprovals, mint)
+  const patches = []
+  for (const t of targets) {
+    const c = candidates.find((x) => x.path === t)
+    if (!c) {
+      return { ok: false, error: `拒绝: 目标 ${t} 与该规则的已批准范围不一致 — 送人审, 不生成补丁` }
+    }
+    if (!c.exists) {
+      return { ok: false, error: `拒绝: 目标文件不存在 — 永不创建新文件 (${t})` }
+    }
+    if (c.confirmedDir === false) {
+      return { ok: false, error: `拒绝: 目标目录未确认 (${c.directory}) — 目录确认是人的显式操作(projects.json)` }
+    }
+    let content
+    try {
+      content = fs.readFileSync(t, "utf8")
+    } catch {
+      return { ok: false, error: `拒绝: 目标 ${t} 无法读取 — 目标已变更? 送人审(不推断为用户删除)` }
+    }
+    try {
+      patches.push({
+        path: t,
+        patch: formatRulePatch({
+          targetPath: t,
+          why: whyTarget(c),
+          scopePromise: describeScope(rule.scope),
+          trackedNote: c.note,
+          fileContent: content,
+          ruleId: rule.id,
+          version: rule.version,
+          body: rule.body,
+          previous,
+        }),
+      })
+    } catch (err) {
+      const detail = err instanceof PatchError ? err.message : String(err?.message ?? err)
+      return { ok: false, error: `拒绝: 目标 ${t} 补丁生成失败 — ${detail}` }
+    }
+  }
+
+  return {
+    ok: true,
+    ruleId: rule.id,
+    version: rule.version,
+    applied: false,
+    patches,
+    note: "未应用: 需人工(或人授权的 agent)粘贴/写入; 在场确认由人审 CLI(supervisor-memory digest)的只读检查完成",
+  }
+}

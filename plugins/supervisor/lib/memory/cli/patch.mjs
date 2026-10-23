@@ -207,8 +207,7 @@ export function generateRemove(fileContent, { ruleId }) {
  * Human-readable patch text with the mandatory boundary notes (target path /
  * why this target / scope promise / tracking status). Pure string output.
  */
-export function formatPatch({ targetPath, why, scopePromise, tracked, patch }) {
-  const L = []
+export function formatPatch({ targetPath, why, scopePromise, tracked, patch }) {  const L = []
   L.push(`--- 目标: ${targetPath}`)
   L.push(`    为什么是这个目标: ${why}`)
   L.push(`    范围承诺: ${scopePromise}`)
@@ -228,4 +227,32 @@ export function formatPatch({ targetPath, why, scopePromise, tracked, patch }) {
     L.push("    ──── 复制结束 ────")
   }
   return L.join("\n")
+}
+
+/**
+ * Shared single-target patch composition (generate + format) used by BOTH the
+ * CLI approve printer (runApprove, byte-for-byte unchanged output) and the
+ * prepare_publish tool face (v6.0 Part III step 1a). Pure: takes and returns
+ * strings, zero filesystem access. Throws PatchError from generatePatch on
+ * marker anomalies, oversize, or a target that no longer matches the decision
+ * history.
+ */
+export function formatRulePatch({
+  targetPath,
+  why,
+  scopePromise,
+  trackedNote,
+  fileContent,
+  ruleId,
+  version,
+  body,
+  previous,
+}) {
+  return formatPatch({
+    targetPath,
+    why,
+    scopePromise,
+    tracked: trackedNote,
+    patch: generatePatch(fileContent, { ruleId, version, body, previous }),
+  })
 }
