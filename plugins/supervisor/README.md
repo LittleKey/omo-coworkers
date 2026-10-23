@@ -63,17 +63,16 @@ fails safe (no intervention).
 
 ## L0 rule families
 
-- **A `oracle_dispatch`** — high-stakes signal in the current real user turn
-  (credential paths, irreversible commands like `rm -rf` / `git push -f` /
-  `DROP TABLE` / `chmod 777`, contract files like `package.json` / API
-  schema, approval/SLA keywords) **× zero adviser calls in the current turn**.
-  Signal present but an adviser (oracle/council/claude/`councillor-*`) was
-  already called → discard `adviser_already_called`.
 - **B `todo_stale`** —
   B1 *completion-sync*: a task terminal signal (`<task …state="completed">`
   delivery or background-terminal text) with open todo items still on the
   ledger and ≥2 assistant decisions without any todowrite since the signal;
   B2 *dormancy*: an in_progress todo untouched across ≥2 user turns.
+
+Rule A (`oracle_dispatch`, high-stakes × zero adviser calls) retired
+2026-10-23 after user labeling (evidence: docs L0 labeling, design doc
+§III.6); B1/B2 unchanged. Historical `log.jsonl` rows may still carry
+`A.oracle_dispatch` ruleIds and stay readable.
 
 ## Candidate lifecycle
 

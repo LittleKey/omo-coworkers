@@ -26,7 +26,7 @@ import {
   RingIdSet,
   isAdviserSubagent,
 } from "../lib/ledger.mjs"
-import { evaluateRuleA, evaluateRuleB, evaluateAllRules } from "../lib/rules.mjs"
+import { evaluateRuleB, evaluateAllRules } from "../lib/rules.mjs"
 import {
   offerCandidate,
   expireAll,
@@ -80,6 +80,37 @@ function assistantEvent(hooks, sid, messageId) {
   return hooks.event({
     event: { type: "message.updated", properties: { info: { id: messageId, role: "assistant", sessionID: sid } } },
   })
+}
+
+function toolPartEvent(hooks, sid, messageId, callID, tool, input) {
+  return hooks.event({
+    event: {
+      type: "message.part.updated",
+      properties: { part: { type: "tool", callID, tool, messageID: messageId, sessionID: sid, state: { status: "completed", input } } },
+    },
+  })
+}
+
+const TASK_DONE_MARKER = '<task id="7" state="completed">subagent delivery</task>'
+
+// Rule B1 event flow (rule A retired 2026-10-23): a todowrite seeds open
+// todo items, an assistant text part delivers a task terminal signal, then
+// two assistant decisions pass without any todowrite → the next transform
+// evaluation fires B1 (completion-sync). Safe to repeat per turn: every
+// turn's signal is fresh, so each turn yields its own B1 candidate.
+async function b1TurnEvents(hooks, SID, turn) {
+  await userTurnEvent(hooks, SID, `u${turn}`)
+  if (turn === 1) {
+    await toolPartEvent(hooks, SID, `u${turn}`, `call_t${turn}`, "todowrite", {
+      todos: [
+        { id: "1", content: "ship it", status: "completed", priority: "high" },
+        { id: "2", content: "verify it", status: "in_progress", priority: "high" },
+      ],
+    })
+  }
+  await textPartEvent(hooks, SID, `m${turn}`, TASK_DONE_MARKER)
+  await assistantEvent(hooks, SID, `d${turn}x`)
+  await assistantEvent(hooks, SID, `d${turn}y`)
 }
 
 // ---------- filters ----------
@@ -206,56 +237,9 @@ test("ledger: session LRU eviction", () => {
   assert.equal(led.size(), 2)
 })
 
-// ---------- rule A ----------
-
-test("rule A: hit on high-stakes command with zero adviser calls", () => {
-  const rec = freshRecord("s1")
-  newRealUserTurn(rec, "u1")
-  rec.currentUserText = "please run git push -f origin main for me"
-  rec.currentEvidenceHash = evidenceHash(rec.currentUserText)
-  const r = evaluateRuleA(rec)
-  assert.equal(r.kind, "hit")
-  assert.equal(r.ruleId, "A.oracle_dispatch")
-  assert.equal(r.evidence.family, "irreversible_command")
-})
-
-test("rule A: credential path, contract file, SLA signals", () => {
-  for (const [text, family] of [
-    ["read ~/.ssh/id_rsa and tell me", "credential_path"],
-    ["update package.json dependencies", "contract_file"],
-    ["we need sign-off before go-live", "approval_sla"],
-    ["chmod 777 /var/data", "irreversible_command"],
-  ]) {
-    const rec = freshRecord("s1")
-    newRealUserTurn(rec, "u1")
-    rec.currentUserText = text
-    rec.currentEvidenceHash = evidenceHash(text)
-    const r = evaluateRuleA(rec)
-    assert.equal(r?.kind, "hit", text)
-    assert.equal(r.evidence.family, family, text)
-  }
-})
-
-test("rule A: discard when adviser already called this turn", () => {
-  const rec = freshRecord("s1")
-  newRealUserTurn(rec, "u1")
-  rec.currentUserText = "run rm -rf /tmp/build"
-  rec.currentEvidenceHash = evidenceHash(rec.currentUserText)
-  recordAdviserCall(rec, "task", "oracle")
-  const r = evaluateRuleA(rec)
-  assert.equal(r.kind, "discard")
-  assert.equal(r.reason, "adviser_already_called")
-})
-
-test("rule A: benign text → no result", () => {
-  const rec = freshRecord("s1")
-  newRealUserTurn(rec, "u1")
-  rec.currentUserText = "fix the typo in README"
-  rec.currentEvidenceHash = evidenceHash(rec.currentUserText)
-  assert.equal(evaluateRuleA(rec), null)
-})
-
 // ---------- rule B ----------
+// (Rule family A `oracle_dispatch` tests were removed when A was retired
+// 2026-10-23 after user labeling — see README.)
 
 function b1Setup() {
   const rec = freshRecord("s1")
@@ -379,9 +363,9 @@ test("regression: evaluateAllRules forwards cfg — B1 completion-sync fires thr
 
 // ---------- candidates ----------
 
-function withHit(rec, ruleId = "A.oracle_dispatch") {
+function withHit(rec, ruleId = "B.todo_stale") {
   rec.currentEvidenceHash = evidenceHash(rec.currentUserText)
-  return offerCandidate(rec, ruleId, { family: "irreversible_command" }, CFG)
+  return offerCandidate(rec, ruleId, { sub: "dormant" }, CFG)
 }
 
 test("candidates: same binding same rule dedupes", () => {
@@ -454,7 +438,7 @@ test("candidates: capped list", () => {
   for (let i = 0; i < 30; i++) {
     rec.candidates.push({ id: `c${i}`, ruleId: "R", binding: { userTurnId: "u1", turnCount: 1, evidenceHash: "h" }, status: "expired" })
   }
-  offerCandidate(rec, "A.oracle_dispatch", {}, CFG)
+  offerCandidate(rec, "B.todo_stale", {}, CFG)
   assert.equal(rec.candidates.length, CFG.candidatesCap)
 })
 
@@ -467,7 +451,8 @@ test("nudge: format has prefix, binding summary, hint; respects length cap", () 
   const { candidate } = withHit(rec)
   const text = formatNudge(candidate, CFG.nudgeMaxChars)
   assert.ok(text.startsWith("[supervisor-nudge]"))
-  assert.ok(text.includes(`rule=A.oracle_dispatch`))
+  assert.ok(text.includes(`rule=B.todo_stale`))
+  assert.ok(text.includes(`signal=dormant`))
   assert.ok(text.includes(`userTurn=u1`))
   assert.ok(text.includes(`turn=1`))
   assert.ok(text.length <= CFG.nudgeMaxChars)
@@ -478,19 +463,15 @@ test("nudge: format has prefix, binding summary, hint; respects length cap", () 
 
 test("nudge: rule-specific hints are reachable for every emitted ruleId (keys match rules.mjs)", () => {
   // Prove reachability behaviorally — each real ruleId must produce its
-  // specific hint, never the generic fallback. Fixtures reuse the rule A/B
-  // setups from the rule sections above so BOTH ruleIds actually fire
-  // (a fixture that emits nothing would silently shrink coverage to A only).
+  // specific hint, never the generic fallback. The fixture reuses the rule B
+  // setup from the rule section so B.todo_stale actually fires (a fixture
+  // that emits nothing would silently shrink coverage to zero).
+  // (Rule A's fixture was removed when A was retired 2026-10-23.)
   const emitted = new Set()
-  const recA = freshRecord("s1")
-  newRealUserTurn(recA, "u1")
-  recA.currentUserText = "帮我 rm -rf / 并更新 AWS_SECRET_ACCESS_KEY 凭证路径"
-  for (const r of evaluateAllRules(recA, CFG)) emitted.add(r.ruleId)
   const recB = b1Setup()
   recordAssistantDecision(recB, "a2")
   recordAssistantDecision(recB, "a3")
   for (const r of evaluateAllRules(recB, CFG)) emitted.add(r.ruleId)
-  assert.ok(emitted.has("A.oracle_dispatch"), `fixture A must emit A.oracle_dispatch, got ${[...emitted]}`)
   assert.ok(emitted.has("B.todo_stale"), `fixture B must emit B.todo_stale, got ${[...emitted]}`)
   for (const ruleId of emitted) {
     const c = { ruleId, ruleVersion: 1, binding: { sessionId: "s", userTurnId: "u", turnCount: 1, evidenceHash: "h" }, evidence: {} }
@@ -512,16 +493,14 @@ test("nudge: injected message shape is append-only user text part", () => {
 
 // ---------- integration: hooks (observe mode) ----------
 
-test("observe mode: high-stakes turn → l0_hit logged, zero injection into messages", async () => {
+test("observe mode: B1 completion-sync → l0_hit logged, zero injection into messages", async () => {
   const { hooks, readLog } = await makePlugin({ mode: "observe" })
   const SID = "ses_obs"
   await sessionEvent(hooks, SID)
-  await userTurnEvent(hooks, SID, "u1")
-  await textPartEvent(hooks, SID, "u1", "please run git push -f origin main")
-  await assistantEvent(hooks, SID, "a1")
+  await b1TurnEvents(hooks, SID, 1)
   const messages = [
-    { info: { id: "u1", role: "user", sessionID: SID }, parts: [{ type: "text", text: "please run git push -f origin main" }] },
-    { info: { id: "a1", role: "assistant", sessionID: SID }, parts: [] },
+    { info: { id: "u1", role: "user", sessionID: SID }, parts: [{ type: "text", text: "finish the deploy task" }] },
+    { info: { id: "d1x", role: "assistant", sessionID: SID }, parts: [] },
   ]
   const snapshot = JSON.stringify(messages)
   await hooks["experimental.chat.messages.transform"]({}, { messages })
@@ -529,7 +508,8 @@ test("observe mode: high-stakes turn → l0_hit logged, zero injection into mess
   const log = readLog()
   const hit = log.find((e) => e.kind === "l0_hit")
   assert.ok(hit, "l0_hit expected in observe log")
-  assert.equal(hit.ruleId, "A.oracle_dispatch")
+  assert.equal(hit.ruleId, "B.todo_stale")
+  assert.equal(hit.evidence.sub, "completion_sync")
   const evalEntry = log.find((e) => e.kind === "transform_eval")
   assert.equal(evalEntry.mode, "observe")
 })
@@ -580,9 +560,7 @@ test("unknown session in transform → skip, no ledger entry", async () => {
 
 async function injectSetup(hooks, SID) {
   await sessionEvent(hooks, SID)
-  await userTurnEvent(hooks, SID, "u1")
-  await textPartEvent(hooks, SID, "u1", "please run git push -f origin main now")
-  await assistantEvent(hooks, SID, "a1")
+  await b1TurnEvents(hooks, SID, 1)
 }
 
 test("inject mode: appends exactly one [supervisor-nudge] user message", async () => {
@@ -590,8 +568,8 @@ test("inject mode: appends exactly one [supervisor-nudge] user message", async (
   const SID = "ses_inj"
   await injectSetup(hooks, SID)
   const messages = [
-    { info: { id: "u1", role: "user", sessionID: SID }, parts: [{ type: "text", text: "please run git push -f origin main now" }] },
-    { info: { id: "a1", role: "assistant", sessionID: SID }, parts: [] },
+    { info: { id: "u1", role: "user", sessionID: SID }, parts: [{ type: "text", text: "finish the deploy task" }] },
+    { info: { id: "d1x", role: "assistant", sessionID: SID }, parts: [] },
   ]
   await hooks["experimental.chat.messages.transform"]({}, { messages })
   assert.equal(messages.length, 3)
@@ -602,7 +580,7 @@ test("inject mode: appends exactly one [supervisor-nudge] user message", async (
   const log = readLog()
   const inj = log.filter((e) => e.kind === "injected")
   assert.equal(inj.length, 1)
-  assert.equal(inj[0].ruleId, "A.oracle_dispatch")
+  assert.equal(inj[0].ruleId, "B.todo_stale")
 })
 
 test("inject mode: same binding second request does not re-inject", async () => {
@@ -627,9 +605,7 @@ test("inject mode: per-session budget cap (default 3)", async () => {
   await sessionEvent(hooks, SID)
   const messages = []
   for (let turn = 1; turn <= 5; turn++) {
-    await userTurnEvent(hooks, SID, `u${turn}`)
-    await textPartEvent(hooks, SID, `u${turn}`, `run git push -f in step ${turn}`)
-    await assistantEvent(hooks, SID, `a${turn}`)
+    await b1TurnEvents(hooks, SID, turn)
     messages.push({ info: { id: `u${turn}`, role: "user", sessionID: SID }, parts: [] })
     await hooks["experimental.chat.messages.transform"]({}, { messages })
   }
@@ -744,8 +720,19 @@ test("v2 entry: events flow through subscribe() into the ledger; context handler
     [
       v2Event("session.created", { info: { id: SID, title: "New session" } }),
       v2Event("message.updated", { info: { id: "u1", role: "user", sessionID: SID } }),
-      v2Event("message.part.updated", { part: { type: "text", messageID: "u1", sessionID: SID, text: "please run git push -f origin main now" } }),
-      v2Event("message.updated", { info: { id: "a1", role: "assistant", sessionID: SID } }),
+      v2Event("message.part.updated", {
+        part: {
+          type: "tool",
+          callID: "c1",
+          tool: "todowrite",
+          messageID: "u1",
+          sessionID: SID,
+          state: { status: "completed", input: { todos: [{ id: "1", status: "completed" }, { id: "2", status: "in_progress" }] } },
+        },
+      }),
+      v2Event("message.part.updated", { part: { type: "text", messageID: "m1", sessionID: SID, text: TASK_DONE_MARKER } }),
+      v2Event("message.updated", { info: { id: "d1", role: "assistant", sessionID: SID } }),
+      v2Event("message.updated", { info: { id: "d2", role: "assistant", sessionID: SID } }),
     ],
   )
   await supervisorV2.setup(ctx)
@@ -755,8 +742,8 @@ test("v2 entry: events flow through subscribe() into the ledger; context handler
     return txt.includes('"kind":"user_turn"') || null
   }, 5000, "user_turn via v2 subscription")
   const messages = [
-    { info: { id: "u1", role: "user", sessionID: SID }, parts: [{ type: "text", text: "please run git push -f origin main now" }] },
-    { info: { id: "a1", role: "assistant", sessionID: SID }, parts: [] },
+    { info: { id: "u1", role: "user", sessionID: SID }, parts: [{ type: "text", text: "finish the deploy task" }] },
+    { info: { id: "d1", role: "assistant", sessionID: SID }, parts: [] },
   ]
   await captured.handler({ messages })
   assert.equal(messages.length, 3, "v2 context handler must append exactly one nudge in inject mode")

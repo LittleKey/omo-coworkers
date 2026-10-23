@@ -1,14 +1,20 @@
 // E2E mock provider (pattern reused from /tmp/opencode/probe2/mock/server.mjs).
 // OpenAI-compatible: captures every request body to CAPTURE (jsonl), replies
-// with canned SSE. MODE=toolcall: the first MAIN (non-title) request gets a
-// glob tool_call so opencode loops back with a second main request within the
-// same user turn; later requests get plain text.
+// with canned SSE. MODE=B1 script (rule A retired 2026-10-23; B.todo_stale
+// completion-sync is the only nudge family): within ONE user turn —
+//   req1: todowrite tool_call  → seeds todo state (assistant decision 1)
+//   req2: task-completed text marker + glob tool_call → B1 signal
+//   req3/req4: glob tool_calls → assistant decisions 3 and 4
+//   req5: plain text → turn ends
+// The B1 candidate matures (2 assistant decisions after the signal) by the
+// req4 or req5 transform depending on host part/updated ordering, so the
+// injected nudge appears in exactly one captured request body either way.
 import http from "node:http"
 import fs from "node:fs"
 
 const PORT = Number(process.env.MOCK_PORT ?? 4399)
 const CAPTURE = process.env.MOCK_CAPTURE
-const TOOLCALL_FIRST = process.env.MOCK_TOOLCALL_FIRST === "1"
+const B1_SCRIPT = process.env.MOCK_B1_SCRIPT === "1"
 
 let mainRequests = 0
 
@@ -32,8 +38,21 @@ const server = http.createServer((req, res) => {
       (m) => m.role === "system" && String(Array.isArray(m.content) ? "" : m.content).includes("title generator"),
     )
     res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" })
-    if (TOOLCALL_FIRST && !isTitle && mainRequests++ === 0) {
-      res.write(chunk({ role: "assistant", content: null, tool_calls: [{ index: 0, id: "call_e2e_1", type: "function", function: { name: "glob", arguments: "" } }] }, null))
+    const n = !isTitle && B1_SCRIPT ? mainRequests++ : -1
+    if (n === 0) {
+      // seed todo state via a real todowrite call
+      res.write(chunk({ role: "assistant", content: null, tool_calls: [{ index: 0, id: "call_b1_1", type: "function", function: { name: "todowrite", arguments: "" } }] }, null))
+      res.write(chunk({ tool_calls: [{ index: 0, function: { arguments: JSON.stringify({ todos: [{ id: "1", content: "ship it", status: "completed", priority: "high" }, { id: "2", content: "verify it", status: "in_progress", priority: "high" }] }) } }] }, null))
+      res.write(chunk({}, "tool_calls"))
+    } else if (n === 1) {
+      // task terminal signal (text part) + glob tool call keeps the turn alive
+      res.write(chunk({ role: "assistant", content: '<task id="7" state="completed">subagent delivery</task>' }, null))
+      res.write(chunk({ content: null, tool_calls: [{ index: 0, id: "call_b1_2", type: "function", function: { name: "glob", arguments: "" } }] }, null))
+      res.write(chunk({ tool_calls: [{ index: 0, function: { arguments: JSON.stringify({ pattern: "*.json", path: "/tmp/opencode" }) } }] }, null))
+      res.write(chunk({}, "tool_calls"))
+    } else if (n === 2 || n === 3) {
+      // two more assistant turns (each a decision) mature the B1 candidate
+      res.write(chunk({ role: "assistant", content: null, tool_calls: [{ index: 0, id: `call_b1_${n + 1}`, type: "function", function: { name: "glob", arguments: "" } }] }, null))
       res.write(chunk({ tool_calls: [{ index: 0, function: { arguments: JSON.stringify({ pattern: "*.json", path: "/tmp/opencode" }) } }] }, null))
       res.write(chunk({}, "tool_calls"))
     } else {

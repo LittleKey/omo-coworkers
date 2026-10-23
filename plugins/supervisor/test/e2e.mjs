@@ -24,7 +24,7 @@ const OPENCODE_BIN =
 const PROBE_HOME = "/tmp/opencode/probe2/home"
 const PLUGIN_ENTRY = new URL("../index.v1.mjs", import.meta.url).pathname
 const NUDGE = "[supervisor-nudge]"
-const PROMPT = "please run git push -f origin main to deploy, and check the key in ~/.ssh/id_rsa"
+const PROMPT = "please finish the deploy task and keep the todo list in sync"
 
 const results = []
 const check = (name, ok, detail) => {
@@ -90,7 +90,7 @@ async function main() {
 
   // 3. mock provider (captures every provider request body).
   mockProc = spawn(process.execPath, [new URL("./e2e-mock.mjs", import.meta.url).pathname], {
-    env: { ...process.env, MOCK_PORT: String(mockPort), MOCK_CAPTURE: capturePath, MOCK_TOOLCALL_FIRST: "1" },
+    env: { ...process.env, MOCK_PORT: String(mockPort), MOCK_CAPTURE: capturePath, MOCK_B1_SCRIPT: "1" },
     stdio: ["ignore", "ignore", fs.openSync(path.join(workDir, "mock.log"), "w")],
   })
 
@@ -191,7 +191,7 @@ async function main() {
     const withMarker = captured.filter((c) => JSON.stringify(c.parsed).includes(NUDGE))
     check("observe: zero nudge markers in provider requests", withMarker.length === 0, `${withMarker.length} requests contained ${NUDGE}`)
     const l0hits = pluginLog.filter((e) => e.kind === "l0_hit")
-    check("observe: log has L0 hit entries", l0hits.length >= 1 && l0hits.some((e) => e.ruleId === "A.oracle_dispatch"), JSON.stringify(l0hits.map((e) => e.ruleId)))
+    check("observe: log has L0 hit entries", l0hits.length >= 1 && l0hits.some((e) => e.ruleId === "B.todo_stale"), JSON.stringify(l0hits.map((e) => e.ruleId)))
     check("observe: log has transform_eval entries", pluginLog.some((e) => e.kind === "transform_eval"), "")
   } else {
     // (b1) nudge present in provider request body, exactly once overall
@@ -201,7 +201,7 @@ async function main() {
     check("inject: title-generation request untouched", titleHits.length === 0, `${titleHits.length} title requests contained the marker`)
     check("inject: exactly ONE injection across all requests (same-binding dedup)", hits.length === 1, `${hits.length} requests contained the marker`)
     const body = JSON.stringify(hits[0]?.parsed ?? {})
-    check("inject: nudge carries binding summary", body.includes("rule=A.oracle_dispatch") && body.includes("binding=session"), "")
+    check("inject: nudge carries binding summary", body.includes("rule=B.todo_stale") && body.includes("binding=session"), "")
 
     // (b2) not persisted: session API + opencode.db are marker-free
     const apiMsgs = await (await get(`/session/${sessionId}/message`)).text()
