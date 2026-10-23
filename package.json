@@ -20,7 +20,8 @@
   "bugs": "https://github.com/LittleKey/omo-coworkers/issues",
   "bin": {
     "coworkers-install": "./bin/coworkers-install.mjs",
-    "dw-install": "./bin/coworkers-install.mjs"
+    "dw-install": "./bin/coworkers-install.mjs",
+    "supervisor-memory": "./bin/supervisor-memory.mjs"
   },
   "files": [
     "bin",

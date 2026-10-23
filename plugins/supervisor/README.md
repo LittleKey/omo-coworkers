@@ -153,17 +153,104 @@ backups inherit the same sensitivity.
   parse, schema, marker-vs-content seq, permissions, lock state, incomplete
   commits). CLI commands must surface its findings instead of acting.
 
+### CLI (`bin/supervisor-memory.mjs`)
+
+The human-review CLI (P3) and the exact-patch printer (P4). The CLI is the
+only trusted approval surface (design I.6): approvals are TTY-interactive,
+bound to the approved object's hash, and the plugin itself keeps **zero
+write access to target files** — a human always applies patches by hand.
+
+```sh
+supervisor-memory <command> [args] [--root <dir>]
+```
+
+Schema gate: at startup the CLI pre-checks the store's schema id/version and
+refuses to run against an incompatible store (upgrade path: stop the old tool
+version, back up the directory, upgrade CLI + store, then migrate).
+
+| Command | Semantics |
+| --- | --- |
+| `init [--root <dir>]` | Explicitly create the store (default root `~/.local/share/opencode-supervisor/memory`); refuses to overwrite (`STORE_EXISTS`). |
+| `digest` | Pending candidates + source excerpts + D9 read-only presence check + D10 weekly review. Read-only; no model calls. |
+| `digest --draft <ISS-…>` | Draft a rule body for one candidate via the draft endpoint (see below). One attempt; failure/timeout never blocks digest. |
+| `approve <ISS-…\|RUL-…>` | Three-stage TTY approval (D6): targets → full object review → confirm. Re-verifies the object hash and a store fingerprint at confirm time; any concurrent change invalidates the confirmation (no silent retry). On success prints the patch(es) — approval ≠ applied. |
+| `discard <ISS-…\|EVT-…>` | Terminal state: candidate dropped / event marked false-positive. Re-reporting the same fact only duplicates the count, never revives authorization. |
+| `merge <donor> <target>` | Human merges duplicate candidates; both events keep their original sources; merging grants no authorization and widens no scope. |
+| `disable <RUL-…>` | Records the disable decision and prints removal patches for every known target. Stopping the rule in the store does NOT retract file residue — apply the removal patches by hand. |
+| `status` / `doctor` | Human-readable read-only views; `doctor` includes the incomplete-commit diff report and exits 1 (authorization outputs stay closed) on unhealthy stores. |
+
+#### The full loop
+
+```sh
+supervisor-memory init
+# … supervisor plugin reports candidates while you work …
+supervisor-memory digest
+supervisor-memory digest --draft ISS-ab12cd34   # optional: model-drafted body
+supervisor-memory approve ISS-ab12cd34          # 3-stage TTY review
+#   → prints the exact patch; you paste it into the target AGENTS.md yourself
+supervisor-memory digest                        # D9 check now shows 在场 / 待人工应用
+```
+
+A publish target must satisfy all three conditions (D8 + A2): the file
+already exists, you confirm that exact file, and its load scope is verified —
+OpenCode v2.1.2 loads only `AGENTS.md` files (global
+`~/.config/opencode/AGENTS.md`, then the project's nearest-first from cwd; a
+failing project file fails the whole instruction source). The CLI never
+recommends `CLAUDE.md`, never creates new files, never falls back from a
+subdirectory scope to the repo root, and never falls back to user-global.
+If no compliant target exists, the candidate stays unpublished with the
+reason printed.
+
+#### Patch format (P4)
+
+Patches are printed, never written. A managed segment is wrapped in a
+per-rule per-version marker pair; bodies are capped at 10 lines (over-limit
+fails whole, never truncated):
+
+```
+<!-- supervisor-memory:rule:RUL-xxxxxx:v2 -->
+…rule body…
+<!-- /supervisor-memory:rule:RUL-xxxxxx:v2 -->
+```
+
+Every patch carries its boundary notes: target path, why this target, the
+scope promise, and git-tracking status. Three operations: add (append the
+segment), replace (old segment → new segment), remove (delete the whole
+segment). If a target no longer matches what was recorded (segment changed
+or removed externally), the CLI says "target changed → human review" and
+never infers "the user deleted it".
+
+#### `digest --draft` endpoint
+
+Environment variables: `SUPERVISOR_MEMORY_DRAFT_API_KEY` (no key → the step
+is skipped with a note), `SUPERVISOR_MEMORY_DRAFT_BASE_URL` (default
+`http://10.126.126.10:3000/v1`), `SUPERVISOR_MEMORY_DRAFT_MODEL` (default
+`glm-5.3`). Outbound scope: exactly one request containing this candidate's
+events + excerpts — never the rest of the store. One attempt, 30 s timeout;
+failures/timeout are counted on the candidate and drafting falls back to
+manual. The drafted body is stored in the rebuildable `digest/drafts.json`
+view (the store itself has no draft field in M1), and adoption still requires
+the full three-stage approval.
+
 ### Tests
 
 ```sh
-node --test test/unit.test.mjs test/v2-context.test.mjs test/store.test.mjs
+node --test test/unit.test.mjs test/v2-context.test.mjs test/store.test.mjs test/cli.test.mjs
 ```
 
 `test/store.test.mjs` covers the full T4 fault matrix (missing/corrupt/
 truncated/permission/lock/unknown-schema rejection, per-operation crash
 injection over every transaction-checklist step, idempotency, lock
 recovery/refusal, init permissions) — always against temp directories; the
-real `~/.local/share/opencode-supervisor/` is never touched.
+real `~/.local/share/opencode-supervisor/` is never touched. `test/cli.test.mjs`
+covers the P3/P4 CLI: T3 (authorization race: store changed between stage 2
+and stage 3 → confirmation invalidated; disable/re-approve/duplicate
+report/merge/draft regen cannot revive authorization; non-TTY refused), T5
+(target boundary: unconfirmed dirs, subdir scope, CLAUDE.md-only projects,
+tracked files, >10-line bodies, externally changed targets), T6 (zero writes
+to target files across all normal and error paths) and the `--draft` mock
+endpoint (success / HTTP failure / timeout, request carries only the named
+candidate).
 
 ## Tests
 

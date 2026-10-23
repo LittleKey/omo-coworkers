@@ -20,6 +20,7 @@
 
 import { createSupervisorCore } from "./lib/runtime.mjs"
 import { createV2ContextHandler } from "./lib/v2-context.mjs"
+import { registerMemoryTool } from "./lib/memory/tool.mjs"
 
 const supervisor = {
   id: "supervisor",
@@ -63,6 +64,25 @@ const supervisor = {
       if (event?.messages?.some(message => message.info)) return core.v2.onContext(event)
       return nativeContext(event)
     })
+
+    // Optional memory tool face (m1 P2): registered only when explicitly
+    // enabled (options.memory.enable === true); default OFF means no
+    // registration and zero behavior difference. Any failure here is logged
+    // and swallowed — the L0/inject paths above must never be affected (D1
+    // fault isolation).
+    try {
+      await registerMemoryTool(ctx, { log: (entry) => core.log.write(entry) })
+    } catch (err) {
+      try {
+        core.log.write({
+          kind: "internal_error",
+          where: "memory.register",
+          error: String(err?.message ?? err),
+        })
+      } catch {
+        /* never propagate */
+      }
+    }
 
     // No documented API exists to cancel the subscription stream, so the
     // unload function only stops event processing.
