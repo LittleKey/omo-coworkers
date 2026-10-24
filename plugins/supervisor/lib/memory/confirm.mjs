@@ -42,11 +42,38 @@ export function clampConfirmTimeoutMin(v) {
  * $HOME/.local/state/opencode/service.json (port lives inside `url`); older
  * layouts carried `{port,password}`; one legacy file under .config holds only
  * the password. OPENCODE_SERVICE_JSON overrides the file path (tests).
- * Returns {base, authHeader} or null when nothing resolvable exists — callers
- * degrade to MEMORY_CONFIRMATION_UNAVAILABLE (fall back to the CLI), never
- * guess a port.
+ *
+ * Third source (live-host gap, measured 2026-10-24): a live host spawned by
+ * the OpenChamber web UI (opencode 2.1.4, pid 2324027) writes NO service.json
+ * — ~/.local/state/opencode/service.json absent, .config copy is a stale
+ * legacy leftover — so file discovery alone returned null and Bridge A
+ * degraded to MEMORY_CONFIRMATION_UNAVAILABLE (the phone-side approval
+ * "refusals" in approval-audit.jsonl). That host does carry a valid
+ * OPENCODE_PASSWORD in its environ, and the plugin runs INSIDE the host
+ * process, so its listening port is deterministically derivable from
+ * /proc: readlink(/proc/self/fd/*) socket:[inode] set ∩ /proc/net/tcp(+tcp6)
+ * state==0A (LISTEN) rows — on the live host exactly one row matches
+ * (port 37563, bound 127.0.0.1). Zero guessing: 0 or >1 matching listeners
+ * → this source returns null (fail-closed), and a port without
+ * OPENCODE_PASSWORD is likewise unusable → null. Non-Linux / permission /
+ * shape anomalies are caught → null. Sources are tried in priority order:
+ * OPENCODE_SERVICE_JSON > ~/.local/state/opencode/service.json >
+ * ~/.config/opencode/service.json > self-socket+env. The two file sources'
+ * logic and parsing are unchanged; no state is cached across calls, so a
+ * host restart that changes the port is picked up on the next tool call.
+ *
+ * Returns {base, authHeader, source} or null when nothing resolvable exists
+ * — callers degrade to MEMORY_CONFIRMATION_UNAVAILABLE (fall back to the
+ * CLI), never guess a port. `fdLister`/`netReader` are injectable for tests;
+ * the defaults read /proc/self/fd and /proc/net/tcp{,6} directly (self only —
+ * never another pid's /proc; no ss/lsof subprocesses).
  */
-export async function resolveHostApi({ env = process.env, readFile = (p) => fs.readFileSync(p, "utf8") } = {}) {
+export async function resolveHostApi({
+  env = process.env,
+  readFile = (p) => fs.readFileSync(p, "utf8"),
+  fdLister = defaultFdLister,
+  netReader = defaultNetReader,
+} = {}) {
   const candidates = []
   if (env.OPENCODE_SERVICE_JSON) candidates.push(env.OPENCODE_SERVICE_JSON)
   const home = env.HOME ?? ""
@@ -72,7 +99,95 @@ export async function resolveHostApi({ env = process.env, readFile = (p) => fs.r
     const password = typeof doc.password === "string" ? doc.password : ""
     return { base, authHeader: "Basic " + Buffer.from(`opencode:${password}`).toString("base64"), source: p }
   }
+  return resolveSelfSocketApi({ env, fdLister, netReader })
+}
+
+/**
+ * Self-socket discovery (third source, last priority): the only non-file way
+ * to find the host is the process's own listening socket. Steps, all
+ * fail-closed — any failure yields null, never a guessed port:
+ *   ① fd inodes via `fdLister` (default: readlink /proc/self/fd/*,
+ *     keep `socket:[N]` entries)
+ *   ② listeners via `netReader` (default: /proc/net/tcp + /proc/net/tcp6,
+ *     rows with state 0A = LISTEN, as {port, inode})
+ *   ③ EXACTLY one listener whose inode ∈ ① → base=http://127.0.0.1:<port>;
+ *     0 or >1 matches → null (ambiguous namespace would be a guess)
+ *   ④ auth: env.OPENCODE_PASSWORD must exist → Basic base64("opencode:<pw>");
+ *     without it a port alone is unusable → null.
+ */
+async function resolveSelfSocketApi({ env, fdLister, netReader }) {
+  let inodes
+  let listeners
+  try {
+    inodes = await fdLister()
+    listeners = await netReader()
+  } catch {
+    return null // /proc unreadable (non-Linux, permissions) → fail-closed
+  }
+  if (!Array.isArray(inodes) || !Array.isArray(listeners)) return null
+  const inodeSet = new Set(inodes.map(canonicalInode).filter((s) => s !== null))
+  const hits = listeners.filter((l) => l && inodeSet.has(canonicalInode(l.inode)))
+  if (hits.length !== 1) return null
+  const port = hits[0].port
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) return null
+  const password = env.OPENCODE_PASSWORD
+  if (typeof password !== "string" || password.length === 0) return null
+  return {
+    base: `http://127.0.0.1:${port}`,
+    authHeader: "Basic " + Buffer.from(`opencode:${password}`).toString("base64"),
+    source: "self-socket",
+  }
+}
+
+/** Canonical decimal form of a /proc inode string; null when not numeric. */
+function canonicalInode(v) {
+  if (typeof v === "number" && Number.isInteger(v) && v >= 0) return String(v)
+  if (typeof v === "string" && /^\d+$/.test(v)) return String(Number(v))
   return null
+}
+
+/** Default ①: socket inodes among THIS process's own fds (/proc/self/fd/*). */
+async function defaultFdLister() {
+  const dir = "/proc/self/fd"
+  const names = fs.readdirSync(dir)
+  const inodes = []
+  for (const n of names) {
+    let target
+    try {
+      target = fs.readlinkSync(`${dir}/${n}`)
+    } catch {
+      continue // fd vanished between readdir and readlink — skip, stay fail-closed
+    }
+    const m = /^socket:\[(\d+)\]$/.exec(target)
+    if (m) inodes.push(m[1])
+  }
+  return inodes
+}
+
+/** Default ②: LISTEN rows of /proc/net/tcp and /proc/net/tcp6 (state 0A),
+ * as {port, inode}. tcp6 absent (IPv6 disabled) is normal → skipped. */
+async function defaultNetReader() {
+  const listeners = []
+  for (const file of ["/proc/net/tcp", "/proc/net/tcp6"]) {
+    let text
+    try {
+      text = fs.readFileSync(file, "utf8")
+    } catch {
+      continue
+    }
+    const lines = text.split("\n")
+    for (let i = 1; i < lines.length; i++) {
+      const parts = lines[i].trim().split(/\s+/)
+      // columns: sl local_address rem_address st … inode(9); st 0A = LISTEN
+      if (parts.length < 10 || parts[3] !== "0A") continue
+      const colon = parts[1].lastIndexOf(":")
+      if (colon < 0) continue
+      const port = Number.parseInt(parts[1].slice(colon + 1), 16) // port column is hex
+      if (!Number.isInteger(port) || port <= 0 || port > 65535) continue
+      listeners.push({ port, inode: parts[9] })
+    }
+  }
+  return listeners
 }
 
 /**

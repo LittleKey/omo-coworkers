@@ -350,7 +350,9 @@ form → `MEMORY_CONFIRMATION_STALE`. Every retry is a brand-new decision
 behind a brand-new form; one formID feeds at most one decision
 (consume-once; reuse → `MEMORY_CONFIRMATION_REPLAY`). With no reachable host
 form API the tool refuses with `MEMORY_CONFIRMATION_UNAVAILABLE` and points
-at the CLI fallback.
+at the CLI fallback. Host API discovery (`resolveHostApi`) tries
+`OPENCODE_SERVICE_JSON` → `~/.local/state/opencode/service.json` →
+`~/.config/opencode/service.json` → a fail-closed self-socket fallback: when no service file resolves, the port comes from `readlink /proc/self/fd/*` socket inodes ∩ `/proc/net/tcp{,6}` LISTEN rows — exactly one match or null, never a guess — authenticated by `OPENCODE_PASSWORD` as Basic auth, covering live hosts spawned by the OpenChamber web UI that never write service.json (measured 2026-10-24: port 37563 pinned by inode intersection).
 
 Critical section (bug ① fix): `lib/memory/approval-service.mjs` serializes
 the final state re-check plus `recordDecision` behind a cross-process mutex
@@ -376,7 +378,7 @@ invalidating delivery, and stop wording.
 ### Tests
 
 ```sh
-node --test test/unit.test.mjs test/v2-context.test.mjs test/store.test.mjs test/cli.test.mjs test/tool.test.mjs test/step1a.test.mjs test/ride.test.mjs test/approval.test.mjs
+node --test test/unit.test.mjs test/v2-context.test.mjs test/store.test.mjs test/cli.test.mjs test/tool.test.mjs test/step1a.test.mjs test/ride.test.mjs test/approval.test.mjs test/confirm.test.mjs
 ```
 
 `test/store.test.mjs` covers the full T4 fault matrix (missing/corrupt/
