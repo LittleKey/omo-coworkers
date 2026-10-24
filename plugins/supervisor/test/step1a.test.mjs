@@ -20,7 +20,7 @@ import { saveDraft, readDrafts } from "../lib/memory/cli/views.mjs"
 import { buildSegment, formatPatch, formatRulePatch, generateRemove } from "../lib/memory/cli/patch.mjs"
 import { candidateTargets, whyTarget } from "../lib/memory/cli/targets.mjs"
 import { describeScope } from "../lib/memory/cli/approve.mjs"
-import { buildDraftRuleTool } from "../lib/memory/draft.mjs"
+import { buildDraftRuleTool, BODY_DRAFTING_GUIDANCE } from "../lib/memory/draft.mjs"
 import { buildPreparePublishTool } from "../lib/memory/publish.mjs"
 import { buildMemoryStatusTool } from "../lib/memory/view.mjs"
 import { registerMemoryTool, buildMemoryTools, FROZEN_TOOL_DESCRIPTION } from "../lib/memory/tool.mjs"
@@ -611,6 +611,26 @@ test("描述 lint: 工具描述无步骤指导/句式处方, schema 无 confirme
     }
   }
   assert.equal(tools[0].description, FROZEN_TOOL_DESCRIPTION)
+})
+
+test("起草指引: draft 与 approve 的 body 参数描述都携带自然语言/防中英混写指引(仅指引, 无校验器)", async (t) => {
+  const tools = buildMemoryTools({ cfg: { enable: true, mock: false, dbPath: null, storeRoot: null, mockDir: null } })
+  const guidance = BODY_DRAFTING_GUIDANCE
+  assert.match(guidance, /自然语言或简洁 Markdown/)
+  assert.match(guidance, /不要复制整段工具调用封装、回执 JSON/)
+  assert.match(guidance, /避免无必要的中英文混写/)
+  for (const name of ["memory_draft_rule", "memory_approve_rule"]) {
+    const tool = tools.find((tl) => tl.name === name)
+    assert.ok(tool, `${name} registered`)
+    const desc = tool.input?.properties?.body?.description ?? ""
+    assert.ok(desc.includes(guidance), `${name}.body description must carry the drafting guidance verbatim`)
+  }
+  // guidance only: a body full of tool-call wrappers is still accepted (no validator, no auto-deletion)
+  const cfg = makeCfg(t)
+  const issueId = seedIssue(openStore(cfg.storeRoot, QUICK))
+  const wrapped = '先调用 foo(bar="x")，返回 {"ok":true} 后执行下述规范：\n规范第二行'
+  const res = await executeDraftTool(cfg, { issueId, body: wrapped })
+  assert.equal(res.ack, true, "no validator rejects wrapper-style bodies")
 })
 
 test("注册: 新三工具与 memory_record_correction 同机制注册(同 ctx, 一次 reload)", async (t) => {

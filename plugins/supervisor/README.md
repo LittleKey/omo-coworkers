@@ -338,7 +338,13 @@ body, scope, targets/agents, channel, object hash, revocation boundary and
 the real deadline — then blocks on the answer. The model can never supply
 confirmation artifacts: `confirmed`/`answer`/`hash`/`decisionId`-style
 arguments are rejected with `MEMORY_INVALID_INPUT` before any form exists.
-`execute` blocks while waiting (probe-verified host behavior).
+`execute` blocks while waiting (probe-verified host behavior). The display is
+a Chinese Markdown template with per-operation × channel copy (approve vs
+enable-delivery), the object/body hashes as four 16-hex groups, the verbatim
+body in a length-adaptive code fence, and exactly one real UTC deadline;
+every audit line also records `displayHash` (sha256 of the shown payload,
+distinct from `snapshotHash`) and the host's actual `answer`, and failure
+paths (cancel/expiry) keep the `formID` instead of nulling it.
 
 Timing and invalidation: the deadline defaults to 10 minutes
 (`memory.confirmTimeoutMin`, clamped 1–30) and is checked *before* each poll

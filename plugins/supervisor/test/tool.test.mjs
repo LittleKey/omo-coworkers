@@ -28,6 +28,7 @@ import { validateEvidence } from "../lib/memory/evidence.mjs"
 import {
   TOOL_NAME,
   FROZEN_TOOL_DESCRIPTION,
+  buildMemoryTools,
   resolveMemoryOptions,
   registerMemoryTool,
 } from "../lib/memory/tool.mjs"
@@ -598,6 +599,17 @@ test("T1 memory.enable on → the eight-tool face registered, each codemode:fals
   }
   const report = state.added.find((tl) => tl.name === TOOL_NAME)
   assert.equal(report.description, FROZEN_TOOL_DESCRIPTION)
+})
+
+test("T1 approve tool: body 参数描述携带起草指引(自然语言优先, 不复制工具调用封装), 机器参数面不变", () => {
+  const tools = buildMemoryTools({ cfg: { enable: true, mock: false, dbPath: null, storeRoot: null, mockDir: null } })
+  const approve = tools.find((tl) => tl.name === "memory_approve_rule")
+  assert.ok(approve, "memory_approve_rule registered")
+  const desc = approve.input?.properties?.body?.description ?? ""
+  assert.ok(desc.includes("正文优先使用用户可直接阅读的自然语言或简洁 Markdown"))
+  assert.ok(desc.includes("不要复制整段工具调用封装、回执 JSON 或与执行无关的字段"))
+  assert.ok(desc.includes("避免无必要的中英文混写"))
+  assert.ok(desc.includes("max 10 lines"), "line-limit contract still stated")
 })
 
 test("T1 resolveMemoryOptions: only ===true enables; unknown keys ignored", () => {

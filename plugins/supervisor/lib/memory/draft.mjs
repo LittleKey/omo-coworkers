@@ -26,6 +26,12 @@ export const DRAFT_TOOL_NAME = "memory_draft_rule"
 export const TOOL_DESCRIPTION =
   "Save a rule body for an existing draft candidate. Changes draft state only."
 
+// Drafting guidance appended to every body-parameter description (draft +
+// approve). Guidance only — no validator enforces it and nothing is ever
+// auto-deleted; it steers the drafting style toward human-readable rules.
+export const BODY_DRAFTING_GUIDANCE =
+  "正文优先使用用户可直接阅读的自然语言或简洁 Markdown。工具名、参数名和调用示例仅在表达规则所必需时保留；不要复制整段工具调用封装、回执 JSON 或与执行无关的字段。保留必要技术标识，避免无必要的中英文混写。"
+
 const INPUT_SCHEMA = {
   type: "object",
   properties: {
@@ -35,7 +41,7 @@ const INPUT_SCHEMA = {
     },
     body: {
       type: "string",
-      description: "Required. Rule body text; max 10 lines — an oversize body rejects the whole call (never truncated).",
+      description: `Required. Rule body text; max 10 lines — an oversize body rejects the whole call (never truncated). ${BODY_DRAFTING_GUIDANCE}`,
     },
   },
   required: ["issueId", "body"],

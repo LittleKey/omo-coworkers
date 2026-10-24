@@ -16,7 +16,7 @@ import { spawn, spawnSync } from "node:child_process"
 import { DatabaseSync } from "node:sqlite"
 
 import { initStore, openStore } from "../lib/memory/store.mjs"
-import { deriveDeliveryState, RIDE_CHANNEL } from "../lib/memory/ride.mjs"
+import { deriveDeliveryState, rideBodyHash, RIDE_CHANNEL } from "../lib/memory/ride.mjs"
 import {
   executeApproveRule,
   executeEnableDelivery,
@@ -24,7 +24,7 @@ import {
   executeDisableRule,
 } from "../lib/memory/approval-tools.mjs"
 import { submitDecision, withApprovalLock, snapshotState } from "../lib/memory/approval-service.mjs"
-import { createConfirmBridge, CONFIRM_VALUE, CANCEL_VALUE, clampConfirmTimeoutMin } from "../lib/memory/confirm.mjs"
+import { buildApprovalDisplay, createConfirmBridge, CONFIRM_VALUE, CANCEL_VALUE, clampConfirmTimeoutMin } from "../lib/memory/confirm.mjs"
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
@@ -392,21 +392,34 @@ test("gate + scope guards: subagent rejected, cross-project issue rejected, arg-
 
 // ---------- approval happy path + display ----------
 
-test("approve tool (system-ride): full display binds the object, confirm records exactly one decision, issue approved, delivery NOT enabled, files untouched", async (t) => {
+test("approve tool (system-ride): Chinese Markdown template (one real deadline, branch copy, object quad), confirm records exactly one decision, issue approved, delivery NOT enabled, files untouched", async (t) => {
   const env = await makeEnv(t)
   const issue = seedIssue(env.storeRoot)
   const beforeBytes = fs.readFileSync(env.target)
   const p = executeApproveRule({ issueId: issue.id, body: BODY, scope: { kind: "project" }, channel: "system-ride" }, CTX_A, { cfg: env.cfg })
   const formID = await waitForForm(env.formHost)
+  const form = env.formHost.get(formID)
   const disp = env.formHost.displayOf(formID)
+  // form metadata: Chinese presentation, machine values unchanged
+  assert.equal(form.title, `批准规则 · ${issue.title}`, "form title carries the candidate topic")
+  assert.equal(form.fields[0].title, "是否批准以下规则？")
+  assert.deepEqual(form.fields[0].options.map((o) => o.value), ["confirm", "cancel"])
+  assert.deepEqual(form.fields[0].options.map((o) => o.label), ["批准规则", "取消"])
+  // template skeleton
+  assert.ok(disp.includes("### 本次确认"), "### heading renders")
   assert.ok(disp.includes(BODY.split("\n")[0]), "full body line 1 shown")
   assert.ok(disp.includes(BODY.split("\n")[1]), "full body line 2 shown")
-  assert.ok(/project proj-a/.test(disp))
-  assert.ok(/PERSISTENT system-prompt delivery across sessions, not just this session/.test(disp), "system-ride persistence must be explicit")
-  assert.ok(/does NOT enable delivery/.test(disp))
-  assert.ok(/revocation boundary/.test(disp))
-  assert.ok(/deadline: unanswered requests expire at /.test(disp))
-  assert.ok(/object hash \(confirmation binding\): [0-9a-f]{64}/.test(disp))
+  assert.ok(disp.includes(`${issue.id}（新规则；候选：`), "object line carries candidate id+title")
+  assert.ok(/project：项目 proj-a/.test(disp), "scope states the real project match")
+  assert.ok(!disp.includes("AGENTS.md"), "system-ride scope never claims a file")
+  assert.ok(/\*\*批准此规则版本；本次只记录批准，不开启投递、不写文件。\*\*/.test(disp), "branch action copy")
+  assert.ok(!disp.includes("不会开启投递"), "approve copy must not carry the enable-flow negation")
+  assert.ok(/撤销边界/.test(disp))
+  // exactly one real deadline: no epoch-0 artifact, no caller-appended second line
+  assert.equal((disp.match(/确认截止/g) ?? []).length, 1, "exactly one deadline line")
+  assert.ok(/- \*\*确认截止：\*\* \d{4}-\d{2}-\d{2}T.+（UTC）。/.test(disp))
+  assert.ok(!disp.includes("1970-"), "no bogus epoch-0 expiry anywhere")
+  assert.ok(!disp.includes("  | "), "body is fenced verbatim, never pipe-wrapped")
   env.formHost.reply(formID, { choice: "confirm" })
   const res = await p
   assert.equal(res.ok, true, JSON.stringify(res))
@@ -415,6 +428,12 @@ test("approve tool (system-ride): full display binds the object, confirm records
   assert.equal(res.version, 1)
   assert.match(res.formID, /^frm_/)
   assert.equal(typeof res.snapshotHash, "string")
+  // object fingerprint: four 16-hex groups joining to the receipt's objectHash
+  const q = res.objectHash
+  assert.ok(
+    disp.includes(`${q.slice(0, 16)} ${q.slice(16, 32)} ${q.slice(32, 48)} ${q.slice(48, 64)}`),
+    "object hash shown as four groups",
+  )
 
   const store = openStore(env.storeRoot)
   const rule = store.getRule(res.ruleId)
@@ -433,14 +452,24 @@ test("approve tool (system-ride): full display binds the object, confirm records
   assert.equal(audit.at(-1).formID, formID)
   assert.equal(audit.at(-1).sessionID, "ses_root_a")
   assert.equal(typeof audit.at(-1).deadlineTs, "number")
+  // P2 audit: displayHash ≠ snapshotHash; the host's actual answer is on record
+  assert.match(audit.at(-1).displayHash, /^[0-9a-f]{64}$/)
+  assert.notEqual(audit.at(-1).displayHash, audit.at(-1).snapshotHash)
+  assert.deepEqual(audit.at(-1).answer, { choice: "confirm" })
 })
 
-test("approve tool (patch-human-apply): receipt notes manual-apply path, no delivery vocabulary, file untouched", async (t) => {
+test("approve tool (patch-human-apply): display lists each absolute target with Git tracking status, receipt notes manual-apply path, no delivery vocabulary, file untouched", async (t) => {
   const env = await makeEnv(t)
   const issue = seedIssue(env.storeRoot)
   const beforeBytes = fs.readFileSync(env.target)
   const p = executeApproveRule({ issueId: issue.id, body: BODY, scope: { kind: "project" }, channel: "patch-human-apply", targets: [env.target] }, CTX_A, { cfg: env.cfg })
   const formID = await waitForForm(env.formHost)
+  const disp = env.formHost.displayOf(formID)
+  // the store dir is not a git repo → status is "未知", never guessed
+  assert.ok(disp.includes(`  - ${env.target}（Git 跟踪状态：未知）`), "absolute target + honest unknown tracking status")
+  assert.ok(/\*\*批准此规则版本；本次不生成补丁、不修改文件。\*\*/.test(disp), "patch branch action copy")
+  assert.ok(disp.includes("- **限定代理：** 静态文件不支持限定代理"))
+  assert.ok(!disp.includes("不会开启投递"))
   env.formHost.reply(formID, { choice: "confirm" })
   const res = await p
   assert.equal(res.ok, true, JSON.stringify(res))
@@ -448,6 +477,95 @@ test("approve tool (patch-human-apply): receipt notes manual-apply path, no deli
   assert.match(res.note, /memory_prepare_publish/)
   assert.match(res.note, /approval ≠ applied|M ANUALLY|MANUAL/)
   assert.deepEqual(fs.readFileSync(env.target), beforeBytes)
+})
+
+test("approve display (patch): Git tracking status is proven, not guessed (tracked vs untracked in a real repo)", async (t) => {
+  const env = await makeEnv(t)
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "approval-git-"))
+  try {
+    const git = (...args) => {
+      const r = spawnSync("git", ["-C", repo, ...args], { encoding: "utf8" })
+      assert.equal(r.status, 0, `git ${args.join(" ")} failed: ${r.stderr}`)
+      return r.stdout
+    }
+    git("init", "-q")
+    git("config", "user.email", "t@example.test")
+    git("config", "user.name", "t")
+    const tracked = path.join(repo, "tracked.md")
+    const untracked = path.join(repo, "untracked.md")
+    fs.writeFileSync(tracked, "x\n")
+    fs.writeFileSync(untracked, "y\n")
+    git("add", "tracked.md")
+    const issue = seedIssue(env.storeRoot)
+    const p = executeApproveRule({ issueId: issue.id, body: BODY, scope: { kind: "directory", directory: repo }, channel: "patch-human-apply", targets: [tracked, untracked] }, CTX_A, { cfg: env.cfg })
+    const formID = await waitForForm(env.formHost)
+    const disp = env.formHost.displayOf(formID)
+    assert.ok(disp.includes(`  - ${tracked}（Git 跟踪状态：已跟踪）`))
+    assert.ok(disp.includes(`  - ${untracked}（Git 跟踪状态：未跟踪）`))
+    assert.ok(/directory：目录 .+ 及其子树/.test(disp), "directory scope copy")
+    env.formHost.reply(formID, { choice: "cancel" })
+    const res = await p
+    assert.equal(res.code, "MEMORY_CONFIRMATION_CANCELLED")
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true })
+  }
+})
+
+// ---------- display template: adaptive fence, value-based adjudication, builder guards ----------
+
+test("display fence adapts to backtick runs in the body: the verbatim body can never break out of the fence", async (t) => {
+  const env = await makeEnv(t)
+  const issue = seedIssue(env.storeRoot)
+  const body = ['规则第一行', "```js", "console.log(1)", "````", "行内 ` 单反引号", "尾行"].join("\n")
+  const p = executeApproveRule({ issueId: issue.id, body, scope: { kind: "project" }, channel: "system-ride" }, CTX_A, { cfg: env.cfg })
+  const formID = await waitForForm(env.formHost)
+  const disp = env.formHost.displayOf(formID)
+  const lines = disp.split("\n")
+  const openIdx = lines.indexOf("### 规则原文（完整）") + 3 // heading, intro, blank, fence
+  const openFence = lines[openIdx]
+  const closeIdx = lines.lastIndexOf(openFence)
+  assert.match(openFence, /^`{5}$/, "body contains a 4-backtick run → fence must be 5 backticks")
+  assert.notEqual(closeIdx, openIdx, "fence is closed")
+  assert.equal(closeIdx, lines.length - 1, "closing fence is the final line")
+  assert.equal(lines.slice(openIdx + 1, closeIdx).join("\n"), body, "body travels verbatim between the fences")
+  env.formHost.reply(formID, { choice: "confirm" })
+  const res = await p
+  assert.equal(res.ok, true, JSON.stringify(res))
+})
+
+test("adjudication goes by the machine option VALUE, not the Chinese label: reply {choice:'confirm'} still records", async (t) => {
+  const env = await makeEnv(t)
+  const issue = seedIssue(env.storeRoot)
+  const p = executeApproveRule({ issueId: issue.id, body: BODY, scope: { kind: "project" }, channel: "system-ride" }, CTX_A, { cfg: env.cfg })
+  const formID = await waitForForm(env.formHost)
+  const opts = env.formHost.get(formID).fields[0].options
+  assert.deepEqual(
+    opts.map((o) => ({ value: o.value, label: o.label })),
+    [
+      { value: "confirm", label: "批准规则" },
+      { value: "cancel", label: "取消" },
+    ],
+    "Chinese labels, unchanged machine values",
+  )
+  env.formHost.reply(formID, { choice: "confirm" })
+  const res = await p
+  assert.equal(res.ok, true, JSON.stringify(res))
+})
+
+test("buildApprovalDisplay guards: missing/zero/invalid deadline refuses (no 1970), unknown operation/channel refuses", () => {
+  const good = { objectLine: "o", scopeDescription: "s", channel: "system-ride", reviewDate: "2026-11-23", objectHash: "a".repeat(64), body: "b" }
+  const ride = { ...good, operation: "approve" }
+  assert.throws(() => buildApprovalDisplay({ ...ride, deadlineTs: 0 }), /deadlineTs/)
+  assert.throws(() => buildApprovalDisplay({ ...ride, deadlineTs: undefined }), /deadlineTs/)
+  assert.throws(() => buildApprovalDisplay({ ...ride, deadlineTs: -5 }), /deadlineTs/)
+  assert.throws(() => buildApprovalDisplay({ ...ride, deadlineTs: "soon" }), /deadlineTs/)
+  assert.throws(() => buildApprovalDisplay({ ...ride, deadlineTs: Date.now(), operation: "enable" }), /operation/)
+  assert.throws(() => buildApprovalDisplay({ ...ride, deadlineTs: Date.now(), channel: "carrier-pigeon" }), /channel/)
+  assert.throws(
+    () => buildApprovalDisplay({ ...ride, deadlineTs: Date.now(), operation: "enable-delivery", channel: "patch-human-apply" }),
+    /enable-delivery only applies to the system-ride channel/,
+  )
+  assert.throws(() => buildApprovalDisplay({ ...ride, deadlineTs: Date.now(), objectHash: "nothex" }), /64-hex/)
 })
 
 // ---------- cancel / disconnect / unavailable / stale ----------
@@ -462,7 +580,13 @@ test("Cancel → MEMORY_CONFIRMATION_CANCELLED, nothing recorded, audit outcome 
   assert.equal(res.ok, false)
   assert.equal(res.code, "MEMORY_CONFIRMATION_CANCELLED")
   assert.equal(await decisionsCount(env.storeRoot), 0)
-  assert.equal(auditLines(env.storeRoot).at(-1).outcome, "cancelled")
+  const cancelAudit = auditLines(env.storeRoot).at(-1)
+  assert.equal(cancelAudit.outcome, "cancelled")
+  // P2: failure paths keep the formID and record the host's actual answer
+  assert.equal(cancelAudit.formID, formID)
+  assert.match(cancelAudit.formID, /^frm_/)
+  assert.deepEqual(cancelAudit.answer, { choice: "cancel" })
+  assert.match(cancelAudit.displayHash, /^[0-9a-f]{64}$/)
 })
 
 test("host form loss (fork/cleanup) mid-wait → MEMORY_CONFIRMATION_STALE, nothing recorded", async (t) => {
@@ -489,7 +613,13 @@ test("deadline expiry (tool level): expired envelope with cleanup, no decision, 
   assert.ok(res.message.includes("form-deleted"), "cleanup reported: " + res.message)
   assert.equal(await decisionsCount(env.storeRoot), 0)
   assert.equal(env.formHost.ids().length, 0, "pending form deleted on expiry")
-  assert.equal(auditLines(env.storeRoot).at(-1).outcome, "expired")
+  const expAudit = auditLines(env.storeRoot).at(-1)
+  assert.equal(expAudit.outcome, "expired")
+  // P2: expiry keeps the formID (joinable against the form lifecycle); nothing was answered
+  assert.match(expAudit.formID, /^frm_/)
+  assert.equal(expAudit.answer, null)
+  assert.match(expAudit.displayHash, /^[0-9a-f]{64}$/)
+  assert.ok(Number.isFinite(expAudit.deadlineTs) && expAudit.deadlineTs > 0, "audit carries the real deadline, not a 0 placeholder")
 })
 
 test("late-answer race (tool level): user confirms AFTER the deadline → expired, never consumed, no decision", async (t) => {
@@ -703,17 +833,28 @@ test("post-submit failure: issue status update fails → receipt carries decisio
 
 // ---------- delivery enable tool ----------
 
-test("enable tool: full display with binding quadruple, confirm → delivery-enabled; re-run → alreadyEnabled, nothing new", async (t) => {
+test("enable tool: display has binding section (rule/version/bodyHash quads) and enable-specific copy, confirm → delivery-enabled; re-run → alreadyEnabled, nothing new", async (t) => {
   const env = await makeEnv(t)
   const { rule } = seedRule(env.storeRoot)
   const before = fs.readFileSync(env.target)
   const p = executeEnableDelivery({ ruleId: rule.id }, CTX_A, { cfg: env.cfg })
   const formID = await waitForForm(env.formHost)
+  const form = env.formHost.get(formID)
   const disp = env.formHost.displayOf(formID)
+  assert.match(form.title, new RegExp(`^开启持续投递 · ${rule.id}`))
+  assert.equal(form.fields[0].title, "是否开启跨会话投递？")
+  assert.deepEqual(form.fields[0].options.map((o) => o.value), ["confirm", "cancel"])
+  assert.deepEqual(form.fields[0].options.map((o) => o.label), ["开启投递", "取消"])
   assert.ok(disp.includes(BODY.split("\n")[0]))
-  assert.ok(new RegExp(`ruleId=${rule.id} version=1 channel=system-ride`).test(disp), "binding quadruple displayed")
-  assert.ok(/bodyHash=[0-9a-f]{64}/.test(disp))
-  assert.ok(/PERSISTENT/.test(disp))
+  assert.ok(/\*\*授权此规则版本跨会话持续投递；不是仅在当前会话生效。\*\*/.test(disp), "enable branch action copy")
+  assert.ok(!disp.includes("不会开启投递"), "enable display must NOT claim the confirmation does not enable delivery")
+  assert.ok(
+    disp.includes(`- **版本绑定：** 规则 ${rule.id}；当前版本 v1；通道 system-ride；正文指纹（SHA-256，四组连起来即完整指纹）：`),
+    "version-binding line displayed",
+  )
+  const bh = rideBodyHash(rule.body)
+  assert.ok(disp.includes(`${bh.slice(0, 16)} ${bh.slice(16, 32)} ${bh.slice(32, 48)} ${bh.slice(48, 64)}`), "bodyHash shown as four groups")
+  assert.ok((disp.match(/确认截止/g) ?? []).length === 1 && !disp.includes("1970-"), "exactly one real deadline")
   env.formHost.reply(formID, { choice: "confirm" })
   const res = await p
   assert.equal(res.ok, true, JSON.stringify(res))
@@ -722,6 +863,10 @@ test("enable tool: full display with binding quadruple, confirm → delivery-ena
   assert.equal(typeof res.bodyHash, "string")
   assert.match(res.note ?? "", /not retroactively removed|stops appending|withdraw/i)
   assert.equal(deriveDeliveryState(openStore(env.storeRoot).getRule(rule.id), openStore(env.storeRoot).listDecisions()).enabled, true)
+  const enableAudit = auditLines(env.storeRoot).at(-1)
+  assert.equal(enableAudit.outcome, "recorded")
+  assert.deepEqual(enableAudit.answer, { choice: "confirm" })
+  assert.notEqual(enableAudit.displayHash, enableAudit.snapshotHash)
 
   // duplicate → explicit alreadyEnabled, records NOTHING
   const res2 = await executeEnableDelivery({ ruleId: rule.id }, CTX_A, { cfg: env.cfg })

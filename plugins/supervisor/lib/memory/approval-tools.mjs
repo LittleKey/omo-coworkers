@@ -41,8 +41,11 @@
 // the session's hosted form.
 
 import fs from "node:fs"
+import path from "node:path"
+import { spawnSync } from "node:child_process"
 
 import { countBodyLines, BODY_MAX_LINES, generatePatch } from "./cli/patch.mjs"
+import { BODY_DRAFTING_GUIDANCE } from "./draft.mjs"
 import { deriveDeliveryState, rideBodyHash, RIDE_CHANNEL } from "./ride.mjs"
 import { canonicalJson, sha256Hex } from "./store.mjs"
 import {
@@ -64,6 +67,7 @@ import {
   clampConfirmTimeoutMin,
   CONFIRM_VALUE,
   createConfirmBridge,
+  mdInlineSafe,
   requireAbsoluteTarget,
   resolveHostApi,
 } from "./confirm.mjs"
@@ -101,10 +105,52 @@ function rejectForgedConfirmation(args) {
   return null
 }
 
-function scopeDescriptionOf(scope, projectId) {
-  if (scope.kind === "user-global") return "user-global — global ~/.config/opencode/AGENTS.md (loaded by all projects)"
-  if (scope.kind === "project") return `project — the root AGENTS.md of project ${scope.projectId ?? projectId} (confirmed directory)`
-  return `directory — the AGENTS.md of the ${scope.directory} subtree (loaded only by sessions inside that directory)`
+// Scope copy for the approval display (Chinese, matches the template). It
+// states the REAL match semantics only — system-ride matches sessions by
+// project (or user-global), it never mentions AGENTS.md files; the directory
+// scope exists only on the static patch channel.
+function scopeDescriptionOf(scope, projectId, channel) {
+  const ride = channel === "system-ride"
+  if (scope.kind === "user-global") {
+    return ride ? "user-global：所有项目（不限单一项目，匹配全部主会话）" : "user-global：全局（所有项目共用）"
+  }
+  if (scope.kind === "project") {
+    const id = scope.projectId ?? projectId
+    return ride ? `project：项目 ${id}（匹配该项目的主会话）` : `project：项目 ${id}`
+  }
+  return `directory：目录 ${scope.directory} 及其子树（仅该目录内的会话）`
+}
+
+/**
+ * Best-effort Git tracking status for one display target, never a guess:
+ * "已跟踪" only when git proves the path is in the index; "未跟踪" only when
+ * git proves we are inside a work tree and ls-files lists nothing; anything
+ * else (no repo, git missing, timeout, odd output) → "未知".
+ */
+function gitTrackedLabel(absPath) {
+  const run = (args) => {
+    try {
+      const r = spawnSync("git", args, { timeout: 5000, encoding: "utf8" })
+      if (r.error || r.status !== 0) return null
+      return String(r.stdout ?? "")
+    } catch {
+      return null
+    }
+  }
+  const dir = path.dirname(absPath)
+  const inside = run(["-C", dir, "rev-parse", "--is-inside-work-tree"])
+  if (inside === null || inside.trim() !== "true") return "未知"
+  const ls = run(["-C", dir, "ls-files", "--", absPath])
+  if (ls === null) return "未知"
+  return ls.trim().length > 0 ? "已跟踪" : "未跟踪"
+}
+
+/** Short, display-safe topic for form titles: inline-safe, ≤48 chars, or null. */
+function shortTopic(v) {
+  const s = mdInlineSafe(v)
+  if (s.length === 0) return null
+  const chars = Array.from(s)
+  return chars.length > 48 ? chars.slice(0, 48).join("") : s
 }
 
 /** Best-effort append-only audit trail next to the store (extra files do not affect store health). */
@@ -178,23 +224,29 @@ const CONFIRM_UNAVAILABLE_MSG =
  * Shared Bridge A confirmation flow for the two confirm-class tools:
  * snapshot → create form (full display, single choice) → block → deadline-
  * guarded answer → consume-once → answer envelope. Every terminal outcome is
- * audited. Returns {ok:true, formID} or {ok:false, error} (structured).
+ * audited. Returns {ok:true, formID, answer, auditBase} or
+ * {ok:false, error, answer, auditBase} (structured); auditBase ALWAYS rides
+ * along — it carries displayHash (sha256 of the exact payload shown), the
+ * formID once created (kept on cancel/expiry so the audit can join against
+ * the form lifecycle), and the deadline actually used.
  */
-async function runConfirmation({ store, cfg, sessionID, signal, kind, title, display, objectHash, snapshot, snapshotHash, deadlineTs, deadlineMin }) {
-  const auditBase = { tool: kind, sessionID, formID: null, objectHash, snapshotHash, deadlineTs }
+async function runConfirmation({ store, cfg, sessionID, signal, kind, title, display, objectHash, snapshot, snapshotHash, deadlineTs, deadlineMin, fieldTitle, confirmLabel, cancelLabel }) {
+  const auditBase = { tool: kind, sessionID, formID: null, objectHash, snapshotHash, deadlineTs, displayHash: sha256Hex(display) }
   const b = await buildBridge(cfg)
   if (!b.ok) {
-    return { ok: false, error: memoryError("CONFIRMATION_UNAVAILABLE", CONFIRM_UNAVAILABLE_MSG, { retry: "safe" }) }
+    return { ok: false, error: memoryError("CONFIRMATION_UNAVAILABLE", CONFIRM_UNAVAILABLE_MSG, { retry: "safe" }), auditBase, answer: null }
   }
   const { bridge } = b
   let formID = null
   try {
-    const created = await bridge.createForm({ sessionID, title, display, objectHash, kind })
+    const created = await bridge.createForm({ sessionID, title, display, objectHash, kind, fieldTitle, confirmLabel, cancelLabel })
     formID = created.formID
   } catch (e) {
     return {
       ok: false,
       error: memoryError("FORM_ERROR", `${e?.message ?? e} — nothing recorded; retry creates a fresh form`, { retry: "safe" }),
+      auditBase,
+      answer: null,
     }
   }
   auditBase.formID = formID
@@ -226,6 +278,8 @@ async function runConfirmation({ store, cfg, sessionID, signal, kind, title, dis
           "the host session aborted the request — the pending form was cancelled and nothing was recorded; a retry needs a fresh form and a fresh decision",
           { retry: "requires_user_confirmation" },
         ),
+        auditBase,
+        answer: null,
       }
     }
     if (r.status === "answered") {
@@ -240,11 +294,15 @@ async function runConfirmation({ store, cfg, sessionID, signal, kind, title, dis
             "the user chose Cancel on the confirmation form — nothing was recorded; do not retry unless the user explicitly asks again",
             { retry: "requires_user_confirmation" },
           ),
+          auditBase,
+          answer: r.answer,
         }
       }
       return {
         ok: false,
         error: memoryError("CONFIRMATION_INVALID", `the form answer "${String(choice)}" is neither confirm nor cancel — refusing (fail-closed)`, { retry: "safe" }),
+        auditBase,
+        answer: r.answer,
       }
     }
     if (r.status === "cancelled") {
@@ -255,6 +313,8 @@ async function runConfirmation({ store, cfg, sessionID, signal, kind, title, dis
           "the confirmation form was cancelled (user or session teardown) — nothing was recorded; a retry requires a fresh form and a fresh decision",
           { retry: "requires_user_confirmation" },
         ),
+        auditBase,
+        answer: null,
       }
     }
     // expired: deadline passed (checked before the answer was accepted), form deleted locally
@@ -265,6 +325,8 @@ async function runConfirmation({ store, cfg, sessionID, signal, kind, title, dis
         `the confirmation form expired unanswered after ${deadlineMin} minutes (${r.cleanup}) — nothing was recorded; retry re-asks the user with a fresh form`,
         { retry: "safe" },
       ),
+      auditBase,
+      answer: null,
     }
   } catch (e) {
     if (e?.code === "MEMORY_CONFIRMATION_STALE") {
@@ -275,9 +337,11 @@ async function runConfirmation({ store, cfg, sessionID, signal, kind, title, dis
           `${e.message} — nothing recorded; a retry creates a brand-new form and a brand-new decision`,
           { retry: "safe" },
         ),
+        auditBase,
+        answer: null,
       }
     }
-    return { ok: false, error: memoryError("FORM_ERROR", `${e?.message ?? e} — nothing recorded`, { retry: "safe" }) }
+    return { ok: false, error: memoryError("FORM_ERROR", `${e?.message ?? e} — nothing recorded`, { retry: "safe" }), auditBase, answer: null }
   } finally {
     // Session aborted while blocked: cancel the pending form so no stray
     // prompt survives; the outcome error is produced by the caller via signal.
@@ -306,7 +370,7 @@ const APPROVE_INPUT_SCHEMA = {
     },
     body: {
       type: "string",
-      description: `Required. The full rule body text; max ${BODY_MAX_LINES} lines — an oversize body rejects the whole call (never truncated).`,
+      description: `Required. The full rule body text; max ${BODY_MAX_LINES} lines — an oversize body rejects the whole call (never truncated). ${BODY_DRAFTING_GUIDANCE}`,
     },
     scope: {
       type: "object",
@@ -517,30 +581,38 @@ async function runApproveRule(rawArgs, context, { cfg }) {
   }
   const objectHash = sha256Hex(canonicalJson(object))
   const auditRuleId = rule?.id ?? null
-  const display = buildApprovalDisplay({
-    headline: `supervisor-memory approval — ${rule ? `${rule.id} → new version v${rule.version + 1}` : `new rule (from candidate ${issue.id}: ${issue.title})`}`,
-    body,
-    scopeDescription: scopeDescriptionOf(scope, projectId),
-    channel,
-    agents,
-    targets: channel === "patch-human-apply" ? targets : [],
-    reviewDate,
-    objectHash,
-    deadlineTs: 0, // replaced below with the real deadline
-    extraLines: [
-      channel === "system-ride"
-        ? "this approval alone does NOT enable delivery — after approval the user must separately run memory_enable_delivery."
-        : "this approval does NOT write any file — patches for manual application are produced separately (memory_prepare_publish / CLI approve output).",
-    ],
-  })
 
   // Display-time snapshot: captured BEFORE the form exists; the critical
   // section re-verifies it right before recording (bug ① fix).
   const snapshot = snapshotState(store, { ruleId: auditRuleId, issueId: issue?.id ?? null })
   const snapshotHash = sha256Hex(canonicalJson(snapshot))
 
+  // P1 single-source deadline: computed ONCE, then handed to the display
+  // builder, the form wait AND the audit — the same value everywhere. The
+  // builder refuses a missing/zero deadline, so the old "deadlineTs: 0 +
+  // second line appended by the caller" duplication (which could render a
+  // bogus 1970 expiry) is gone by construction.
   const deadlineTs = Date.now() + deadlineMin * 60_000
-  const fullDisplay = `${display}\ndeadline: unanswered requests expire at ${new Date(deadlineTs).toISOString()} and record nothing.`
+
+  const version = rule ? rule.version + 1 : 1
+  const topic = shortTopic(rule ? rule.id : issue?.title)
+  const display = buildApprovalDisplay({
+    operation: "approve",
+    objectLine: rule
+      ? `${rule.id} v${version}（现有规则的新版本）`
+      : `${issue.id}（新规则；候选：${issue.title ?? ""}）`,
+    scopeDescription: scopeDescriptionOf(scope, projectId, channel),
+    channel,
+    agents,
+    targets:
+      channel === "patch-human-apply"
+        ? targets.map((t) => ({ path: t, tracked: gitTrackedLabel(t) }))
+        : [],
+    reviewDate,
+    deadlineTs,
+    objectHash,
+    body,
+  })
 
   // ---- Bridge A: create form → block → deadline-guarded answer ----
   const conf = await runConfirmation({
@@ -549,15 +621,18 @@ async function runApproveRule(rawArgs, context, { cfg }) {
     sessionID,
     signal: context?.signal,
     kind: APPROVE_TOOL_NAME,
-    title: `Approve rule ${rule ? `${rule.id} v${rule.version + 1}` : `(new, from ${issue.id})`}?`,
-    display: fullDisplay,
+    title: topic ? `批准规则 · ${topic}` : `批准规则 · v${version}`,
+    display,
     objectHash,
     snapshot,
     snapshotHash,
     deadlineTs,
     deadlineMin,
+    fieldTitle: "是否批准以下规则？",
+    confirmLabel: "批准规则",
+    cancelLabel: "取消",
   })
-  const auditBase = { sessionID, ruleId: auditRuleId, issueId: issue?.id ?? null, formID: conf.ok ? conf.formID : null, objectHash, snapshotHash, deadlineTs }
+  const auditBase = { ...conf.auditBase, sessionID, ruleId: auditRuleId, issueId: issue?.id ?? null }
   if (!conf.ok) {
     const outcome =
       conf.error.code === "MEMORY_CONFIRMATION_CANCELLED" || conf.error.code === "MEMORY_CONFIRMATION_INVALID"
@@ -567,7 +642,9 @@ async function runApproveRule(rawArgs, context, { cfg }) {
           : conf.error.code === "MEMORY_CONFIRMATION_STALE"
             ? "stale"
             : "error"
-    return { ...conf.error, ...auditOutcome(store, auditBase, outcome) }
+    // Failure paths keep the formID (already inside conf.auditBase) and
+    // record the host's actual answer (null when unanswered).
+    return { ...conf.error, ...auditOutcome(store, auditBase, outcome, { answer: conf.answer ?? null }) }
   }
 
   // ---- critical section: re-check snapshot + record (shared with the CLI) ----
@@ -616,7 +693,7 @@ async function runApproveRule(rawArgs, context, { cfg }) {
     receipt.note =
       "approval recorded — no patch generated, no file written. Use memory_prepare_publish to produce the patches for MANUAL application (approval ≠ applied)."
   }
-  return { ...receipt, ...auditOutcome(store, auditBase, "recorded", { decisionId: decision.id }) }
+  return { ...receipt, ...auditOutcome(store, auditBase, "recorded", { decisionId: decision.id, answer: conf.answer ?? null }) }
 }
 
 // ═══════════════════════ memory_enable_delivery ═══════════════════════
@@ -717,31 +794,28 @@ async function runEnableDelivery(rawArgs, context, { cfg }) {
   const object = { channel: RIDE_CHANNEL, version: rule.version, bodyHash }
   const objectHash = sha256Hex(canonicalJson(object))
 
-  const display = buildApprovalDisplay({
-    headline: `supervisor-memory delivery-enable — ${rule.id} v${rule.version} (channel system-ride)`,
-    body: rule.body,
-    scopeDescription:
-      rule.scope?.kind === "project"
-        ? `project ${rule.scope.projectId} (matching root sessions of that project)`
-        : rule.scope?.kind === "user-global"
-          ? "user-global (all projects)"
-          : String(rule.scope?.kind ?? "unset"),
-    channel: "system-ride",
-    agents: Array.isArray(rule.agents) ? rule.agents : null,
-    targets: [],
-    reviewDate: typeof rule.reviewDate === "string" ? rule.reviewDate : "n/a",
-    objectHash,
-    deadlineTs: 0,
-    extraLines: [
-      `binding (the authorization is bound to exactly this quadruple): ruleId=${rule.id} version=${rule.version} channel=${RIDE_CHANNEL} bodyHash=${bodyHash}`,
-      "re-approving the rule to a new version automatically resets delivery to disabled — this authorization covers ONLY this version.",
-    ],
-  })
+  // P1 single-source deadline: one computation, one value handed to display,
+  // form wait and audit (the caller no longer appends a second deadline line;
+  // the builder itself refuses a missing/zero deadline).
+  const deadlineTs = Date.now() + deadlineMin * 60_000
 
   const snapshot = snapshotState(store, { ruleId })
   const snapshotHash = sha256Hex(canonicalJson(snapshot))
-  const deadlineTs = Date.now() + deadlineMin * 60_000
-  const fullDisplay = `${display}\ndeadline: unanswered requests expire at ${new Date(deadlineTs).toISOString()} and record nothing.`
+
+  const topic = shortTopic(rule.id)
+  const display = buildApprovalDisplay({
+    operation: "enable-delivery",
+    objectLine: `${rule.id} v${rule.version}`,
+    scopeDescription: scopeDescriptionOf(rule.scope ?? {}, null, RIDE_CHANNEL),
+    channel: RIDE_CHANNEL,
+    agents: Array.isArray(rule.agents) ? rule.agents : null,
+    targets: [],
+    reviewDate: typeof rule.reviewDate === "string" ? rule.reviewDate : "n/a",
+    deadlineTs,
+    objectHash,
+    binding: { ruleId: rule.id, version: rule.version, bodyHash },
+    body: rule.body,
+  })
 
   const conf = await runConfirmation({
     store,
@@ -749,15 +823,18 @@ async function runEnableDelivery(rawArgs, context, { cfg }) {
     sessionID,
     signal: context?.signal,
     kind: ENABLE_DELIVERY_TOOL_NAME,
-    title: `Enable persistent system-ride delivery for ${rule.id} v${rule.version}?`,
-    display: fullDisplay,
+    title: topic ? `开启持续投递 · ${topic}` : `开启持续投递 · v${rule.version}`,
+    display,
     objectHash,
     snapshot,
     snapshotHash,
     deadlineTs,
     deadlineMin,
+    fieldTitle: "是否开启跨会话投递？",
+    confirmLabel: "开启投递",
+    cancelLabel: "取消",
   })
-  const auditBase = { sessionID, ruleId, issueId: null, formID: conf.ok ? conf.formID : null, objectHash, snapshotHash, deadlineTs }
+  const auditBase = { ...conf.auditBase, sessionID, ruleId, issueId: null }
   if (!conf.ok) {
     const outcome =
       conf.error.code === "MEMORY_CONFIRMATION_CANCELLED" || conf.error.code === "MEMORY_CONFIRMATION_INVALID"
@@ -767,7 +844,7 @@ async function runEnableDelivery(rawArgs, context, { cfg }) {
           : conf.error.code === "MEMORY_CONFIRMATION_STALE"
             ? "stale"
             : "error"
-    return { ...conf.error, ...auditOutcome(store, auditBase, outcome) }
+    return { ...conf.error, ...auditOutcome(store, auditBase, outcome, { answer: conf.answer ?? null }) }
   }
 
   let submitted
@@ -804,7 +881,7 @@ async function runEnableDelivery(rawArgs, context, { cfg }) {
     sessionID,
     snapshotHash,
     note: `delivery-enabled: rule ${rule.id} v${rule.version} will ride the system prompt of every matching session (persistent across sessions) until delivery is disabled or the rule is re-approved to a new version. Withdrawal only stops appending — text already in history answers or compressed summaries is not retroactively removed.`,
-    ...auditOutcome(store, auditBase, "recorded", { decisionId: submitted.decision.id }),
+    ...auditOutcome(store, auditBase, "recorded", { decisionId: submitted.decision.id, answer: conf.answer ?? null }),
   }
 }
 

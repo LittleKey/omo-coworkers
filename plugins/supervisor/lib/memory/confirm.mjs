@@ -269,22 +269,24 @@ export function createConfirmBridge({
     /**
      * Create the single-choice Confirm/Cancel form against the host
      * (POST /api/session/{sid}/form). `display` is the FULL frozen object
-     * text (body, scope, channel, absolute targets, review date, object
-     * hash, revocation boundary); it is carried verbatim in the field
-     * description so every client sees the complete object, and in metadata
-     * for the audit trail.
+     * display (body, scope, channel, targets, review date, object hash,
+     * deadline); it is carried verbatim in the field description so every
+     * client sees the complete object, and in metadata for the audit trail.
+     * `fieldTitle`/`confirmLabel`/`cancelLabel` are presentation-only; the
+     * machine option VALUES stay CONFIRM_VALUE/CANCEL_VALUE — answer
+     * adjudication always goes by value, never by label.
      */
-    async createForm({ sessionID, title, display, objectHash, kind }) {
+    async createForm({ sessionID, title, display, objectHash, kind, fieldTitle = "Confirm?", confirmLabel = "Confirm", cancelLabel = "Cancel" }) {
       const field = {
         key: "choice",
         type: "string",
-        title: "Confirm?",
+        title: fieldTitle,
         description: display,
         required: true,
         custom: false, // single choice only — no free-text answer can exist
         options: [
-          { value: CONFIRM_VALUE, label: "Confirm" },
-          { value: CANCEL_VALUE, label: "Cancel" },
+          { value: CONFIRM_VALUE, label: confirmLabel },
+          { value: CANCEL_VALUE, label: cancelLabel },
         ],
       }
       const payload = {
@@ -361,51 +363,187 @@ function sleep(ms) {
 }
 
 /**
+ * Make dynamic metadata text (IDs, titles, paths) safe to embed on ONE
+ * Markdown line inside the approval template: newlines and control characters
+ * become spaces so such text can never start a new block (heading, list,
+ * fence) and change the display's structure. Content is not re-ordered and
+ * only trimmed at the ends.
+ */
+export function mdInlineSafe(v) {
+  return String(v ?? "")
+    .replace(/\r\n?|\n/g, " ")
+    // eslint-disable-next-line no-control-regex -- intentional: strip control chars from untrusted metadata
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, " ")
+    .trim()
+}
+
+/**
+ * Length-adaptive code fence: the fence must be strictly longer than the
+ * longest run of backticks inside the body, otherwise the body could close
+ * the fence early and render the rest as template prose. Max(3, L+1).
+ */
+function fenceFor(text) {
+  let longest = 0
+  const runs = String(text).match(/`+/g)
+  if (runs) for (const run of runs) if (run.length > longest) longest = run.length
+  return "`".repeat(Math.max(3, longest + 1))
+}
+
+/**
+ * 64-hex sha256 → four 16-char groups joined by single spaces (the display
+ * shows the digest in four groups; concatenated they are the full fingerprint).
+ */
+export function sha256Quads(hex) {
+  const h = String(hex ?? "")
+  if (!/^[0-9a-f]{64}$/.test(h)) {
+    throw new Error(`buildApprovalDisplay: objectHash must be a 64-hex sha256 digest, got ${JSON.stringify(h.slice(0, 24))}`)
+  }
+  return `${h.slice(0, 16)} ${h.slice(16, 32)} ${h.slice(32, 48)} ${h.slice(48, 64)}`
+}
+
+function trackedStatusLabel(v) {
+  return v === "已跟踪" || v === "未跟踪" ? v : "未知"
+}
+
+const COPY = {
+  "approve:system-ride": {
+    action: "**批准此规则版本；本次只记录批准，不开启投递、不写文件。**",
+    effect:
+      "另行授权投递后，跨会话持续加入匹配主会话每次模型请求的系统提示；直到停止投递、停用规则或重新批准新版。新版需要重新授权投递。",
+    revocation: "停止投递或停用规则只停止后续追加，不清除已有历史回答或压缩摘要。",
+  },
+  "enable-delivery:system-ride": {
+    action: "**授权此规则版本跨会话持续投递；不是仅在当前会话生效。**",
+    effect: "本次确认授权后，将规则加入匹配主会话每次模型请求的系统提示；停止条件同上。",
+    revocation: "停止投递或停用规则只停止后续追加，不清除已有历史回答或压缩摘要。",
+  },
+  "approve:patch-human-apply": {
+    action: "**批准此规则版本；本次不生成补丁、不修改文件。**",
+    effect: "另行生成补丁，由人工应用到下列文件；批准不等于已应用。",
+    revocation:
+      "停用规则不会删除已写入文件的内容；移除仍需人工应用移除补丁，也不会追溯清除历史回答或压缩摘要。",
+  },
+}
+
+/**
  * Build the FULL display text shown to the user before the single Confirm /
- * Cancel choice. Adjudication requirements: full body text, effective scope,
- * channel, agent restriction, absolute target paths, review date, the object
- * hash the confirmation binds to, and the revocation boundary (what cancel /
- * later disable can and cannot undo — history is never retroactively
- * removed; approval ≠ delivery ≠ applied).
+ * Cancel choice — a Chinese Markdown template (headings ### and code fences
+ * render reliably on mobile clients; bare line breaks do not, so every fact
+ * is a list item or its own block). Branch copy is selected by
+ * operation × channel and is the single source of truth: the enable-delivery
+ * display never claims the confirmation "does not enable delivery".
+ *
+ * Adjudication requirements kept: full body text verbatim (no trim, no
+ * indent, no escaping, no re-flow — inside a fence longer than any backtick
+ * run in the body), effective scope, channel, agent restriction, absolute
+ * target paths with Git tracking status, review date, the object hash the
+ * confirmation binds to, the revocation boundary, and EXACTLY ONE real
+ * deadline (epoch milliseconds > 0; anything else refuses rather than
+ * rendering a bogus 1970 expiry).
+ *
+ * `targets` items: {path, tracked} where tracked is "已跟踪" | "未跟踪" |
+ * anything else (rendered as "未知" — never guessed). `binding` (required for
+ * enable-delivery): {ruleId, version, bodyHash}.
  */
 export function buildApprovalDisplay({
-  headline,
-  body,
+  operation,
+  objectLine,
   scopeDescription,
   channel,
-  agents,
-  targets,
+  agents = null,
+  targets = [],
   reviewDate,
-  objectHash,
   deadlineTs,
-  extraLines = [],
+  objectHash,
+  binding = null,
+  body,
 }) {
-  const lines = []
-  lines.push(`─ ${headline} ─`)
-  lines.push("body (full, this exact text is what approval authorizes):")
-  for (const l of String(body).split("\n")) lines.push(`  | ${l}`)
-  lines.push(`effective scope: ${scopeDescription}`)
-  if (channel === "system-ride") {
-    lines.push(`agent restriction: ${Array.isArray(agents) && agents.length > 0 ? agents.join(", ") : "none (all agents)"}`)
-    lines.push(
-      "channel: system-ride — PERSISTENT system-prompt delivery across sessions, not just this session: the body is injected into every model request of matching sessions until delivery is disabled or the rule is re-approved to a new version. No file is ever written.",
+  if (operation !== "approve" && operation !== "enable-delivery") {
+    throw new Error('buildApprovalDisplay: operation must be "approve" or "enable-delivery"')
+  }
+  if (channel !== "system-ride" && channel !== "patch-human-apply") {
+    throw new Error(`buildApprovalDisplay: unknown channel ${JSON.stringify(channel)}`)
+  }
+  if (operation === "enable-delivery" && channel !== "system-ride") {
+    throw new Error("buildApprovalDisplay: enable-delivery only applies to the system-ride channel")
+  }
+  if (!Number.isFinite(deadlineTs) || deadlineTs <= 0) {
+    throw new Error(
+      "buildApprovalDisplay: deadlineTs must be a real epoch-milliseconds value > 0 — a missing or zero deadline would render a wrong 1970 expiry, so this refuses instead",
     )
-    lines.push("this approval alone does NOT enable delivery — delivery is a separate explicit authorization step.")
-  } else {
-    lines.push("agent restriction: none (AGENTS.md publishing cannot distinguish agents)")
-    lines.push("channel: patch-human-apply — the patch is applied manually by a human; nothing is ever written by the tool. Approval ≠ applied.")
   }
-  if (Array.isArray(targets) && targets.length > 0) {
-    lines.push(`targets (absolute paths):`)
-    for (const t of targets) lines.push(`  - ${t}`)
+  const copy = COPY[`${operation}:${channel}`]
+
+  // ---- agents line ----
+  let agentsCopy
+  if (channel === "system-ride") {
+    const list = (Array.isArray(agents) ? agents : []).map(mdInlineSafe).filter((s) => s.length > 0)
+    agentsCopy = list.length > 0 ? list.join("、") : "不限代理"
   } else {
-    lines.push("targets: none (system-ride produces no static targets)")
+    agentsCopy = "静态文件不支持限定代理"
   }
-  lines.push(`review date: ${reviewDate}`)
-  lines.push(`object hash (confirmation binding): ${objectHash}`)
-  lines.push(...extraLines)
-  lines.push("revocation boundary: Cancel records nothing. Later disable/withdrawal only STOPS appending — text already present in history answers or compressed summaries is never retroactively removed.")
-  lines.push(`deadline: unanswered requests expire at ${new Date(deadlineTs).toISOString()} and record nothing.`)
+
+  // ---- static targets section ----
+  let targetsSection
+  if (channel === "system-ride") {
+    targetsSection = "- **静态目标：** 无；此通道不写文件。"
+  } else {
+    const rows = (Array.isArray(targets) ? targets : []).map((t) => {
+      const p = typeof t === "string" ? t : t?.path
+      const tracked = typeof t === "string" ? null : t?.tracked
+      return `  - ${mdInlineSafe(p)}（Git 跟踪状态：${trackedStatusLabel(tracked)}）`
+    })
+    targetsSection = rows.length > 0 ? ["- **静态目标：**", ...rows].join("\n") : "- **静态目标：**（未提供）"
+  }
+
+  // ---- binding section ----
+  const F = "```"
+  const bindingSection = [
+    "### 绑定信息",
+    "- **对象指纹：** SHA-256；四组连起来即完整指纹。",
+    "",
+    F,
+    sha256Quads(objectHash),
+    F,
+  ]
+  if (operation === "enable-delivery") {
+    const b = binding ?? {}
+    bindingSection.push(
+      `- **版本绑定：** 规则 ${mdInlineSafe(b.ruleId)}；当前版本 v${mdInlineSafe(b.version)}；通道 system-ride；正文指纹（SHA-256，四组连起来即完整指纹）：`,
+      "",
+      F,
+      sha256Quads(b.bodyHash),
+      F,
+    )
+  }
+
+  // ---- verbatim body section ----
+  const bodyText = typeof body === "string" ? body : String(body)
+  const fence = fenceFor(bodyText)
+  const bodySection = ["### 规则原文（完整）", "以下内容逐字展示，不做摘要或改写。", "", fence, bodyText, fence]
+
+  const lines = [
+    "### 本次确认",
+    `- **操作：** ${copy.action}`,
+    `- **对象：** ${mdInlineSafe(objectLine)}`,
+    "",
+    "### 适用范围与方式",
+    `- **适用范围：** ${mdInlineSafe(scopeDescription)}`,
+    `- **限定代理：** ${agentsCopy}`,
+    `- **通道：** ${channel}`,
+    `- **生效方式：** ${copy.effect}`,
+    targetsSection,
+    "",
+    "### 时间与撤销",
+    `- **复核日期：** ${mdInlineSafe(reviewDate)}；这是复核日期，不是自动失效日期。`,
+    `- **确认截止：** ${new Date(deadlineTs).toISOString()}（UTC）。`,
+    "- **取消或超时：** 不产生批准或投递授权，保留审计记录。",
+    `- **撤销边界：** ${copy.revocation}`,
+    "",
+    ...bindingSection,
+    "",
+    ...bodySection,
+  ]
   return lines.join("\n")
 }
 
