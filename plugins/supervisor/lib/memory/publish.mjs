@@ -65,7 +65,7 @@ export async function executePreparePublish(rawArgs, context, { cfg }) {
   try {
     return await runPreparePublish(rawArgs, context, { cfg })
   } catch (err) {
-    return { ok: false, error: `prepare_publish 内部错误: ${err?.message ?? err}` }
+    return { ok: false, error: `prepare_publish internal error: ${err?.message ?? err}` }
   }
 }
 
@@ -98,7 +98,7 @@ async function runPreparePublish(rawArgs, context, { cfg }) {
 
   const ruleId = typeof args.ruleId === "string" ? args.ruleId.trim() : ""
   if (ruleId.length === 0) {
-    return { ok: false, error: "ruleId 必须是规则 ID 字符串 (RUL-…)" }
+    return { ok: false, error: "ruleId must be a rule ID string (RUL-…)" }
   }
 
   let store
@@ -110,13 +110,13 @@ async function runPreparePublish(rawArgs, context, { cfg }) {
 
   const rule = store.getRule(ruleId) // throws (fail-closed) on damaged stores
   if (!rule) {
-    return { ok: false, error: `拒绝: 规则 ${ruleId} 不存在` }
+    return { ok: false, error: `rejected: rule ${ruleId} does not exist in the store` }
   }
   if (rule.status === "disabled") {
-    return { ok: false, error: `拒绝: 规则 ${ruleId} 已停用; 重新启用需要全新的审批, 不经本工具` }
+    return { ok: false, error: `rejected: rule ${ruleId} is disabled; re-enabling requires a fresh approval and never goes through this tool` }
   }
   if (rule.status !== "active" || !rule.approvalRef) {
-    return { ok: false, error: `拒绝: 规则 ${ruleId} 未处于已批准状态(当前 ${rule.status})` }
+    return { ok: false, error: `rejected: rule ${ruleId} is not in an approved state (current ${rule.status})` }
   }
   // listDecisions({ruleId}) cannot find a v1 rule's approving decision
   // (first approvals carry decision.ruleId = null — store semantics), so the
@@ -124,7 +124,7 @@ async function runPreparePublish(rawArgs, context, { cfg }) {
   const approves = store.listDecisions({ kind: "approve" })
   const current = approves.find((d) => d.id === rule.approvalRef?.decisionId)
   if (!current) {
-    return { ok: false, error: `拒绝: 未找到与规则 ${ruleId} 当前版本对应的批准决定记录` }
+    return { ok: false, error: `rejected: no approval decision record matching the current version of rule ${ruleId}` }
   }
   const reApprovals = approves.filter((d) => d.ruleId === ruleId)
   const mint = approves
@@ -133,7 +133,7 @@ async function runPreparePublish(rawArgs, context, { cfg }) {
 
   const targets = Array.isArray(rule.targets) ? rule.targets : []
   if (targets.length === 0) {
-    return { ok: false, error: `拒绝: 规则 ${ruleId} 无已登记目标(从未发布); 目标在人工审批(approve)时确定` }
+    return { ok: false, error: `rejected: rule ${ruleId} has no registered targets (never published); targets are fixed during manual approval (approve)` }
   }
 
   // D8 re-verification from CURRENT state: every registered target must
@@ -149,19 +149,19 @@ async function runPreparePublish(rawArgs, context, { cfg }) {
   for (const t of targets) {
     const c = candidates.find((x) => x.path === t)
     if (!c) {
-      return { ok: false, error: `拒绝: 目标 ${t} 与该规则的已批准范围不一致 — 送人审, 不生成补丁` }
+      return { ok: false, error: `rejected: target ${t} is inconsistent with the rule's approved scope — send for human review, no patch generated` }
     }
     if (!c.exists) {
-      return { ok: false, error: `拒绝: 目标文件不存在 — 永不创建新文件 (${t})` }
+      return { ok: false, error: `rejected: target file does not exist — new files are never created (${t})` }
     }
     if (c.confirmedDir === false) {
-      return { ok: false, error: `拒绝: 目标目录未确认 (${c.directory}) — 目录确认是人的显式操作(projects.json)` }
+      return { ok: false, error: `rejected: target directory unconfirmed (${c.directory}) — directory confirmation is an explicit human action (projects.json)` }
     }
     let content
     try {
       content = fs.readFileSync(t, "utf8")
     } catch {
-      return { ok: false, error: `拒绝: 目标 ${t} 无法读取 — 目标已变更? 送人审(不推断为用户删除)` }
+      return { ok: false, error: `rejected: target ${t} unreadable — target changed? send for human review (never inferred as user deletion)` }
     }
     try {
       patches.push({
@@ -180,7 +180,7 @@ async function runPreparePublish(rawArgs, context, { cfg }) {
       })
     } catch (err) {
       const detail = err instanceof PatchError ? err.message : String(err?.message ?? err)
-      return { ok: false, error: `拒绝: 目标 ${t} 补丁生成失败 — ${detail}` }
+      return { ok: false, error: `rejected: patch generation failed for target ${t} — ${detail}` }
     }
   }
 
@@ -190,6 +190,6 @@ async function runPreparePublish(rawArgs, context, { cfg }) {
     version: rule.version,
     applied: false,
     patches,
-    note: "未应用: 需人工(或人授权的 agent)粘贴/写入; 在场确认由人审 CLI(supervisor-memory digest)的只读检查完成",
+    note: "not applied: requires a human (or a human-authorized agent) to paste/write; presence confirmation is done by the read-only check of the human-review CLI (supervisor-memory digest)",
   }
 }

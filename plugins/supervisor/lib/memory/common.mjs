@@ -43,10 +43,10 @@ export function checkCurrentSession({ dbPath, sessionID }) {
     return { ok: false, reason: `current session ${sessionID} is not in the host database — refusing (fail-closed)` }
   }
   if (row.parent_id !== null && row.parent_id !== undefined) {
-    return { ok: false, reason: "当前会话是子会话 (parent_id 非 null); memory 工具只能在根会话使用" }
+    return { ok: false, reason: "current session is a child session (parent_id non-null); memory tools can only be used in a root session" }
   }
   if (typeof row.project_id !== "string" || row.project_id.length === 0) {
-    return { ok: false, reason: "当前会话缺少项目身份 (session_v2.project_id 为空) — 拒绝 (fail-closed)" }
+    return { ok: false, reason: "current session has no project identity (session_v2.project_id is empty) — rejected (fail-closed)" }
   }
   return { ok: true, projectId: row.project_id }
 }
@@ -59,7 +59,7 @@ export function checkCurrentSession({ dbPath, sessionID }) {
 export function gateSession(context, cfg) {
   const sessionID = context?.sessionID
   if (typeof sessionID !== "string" || sessionID.length === 0) {
-    return { ok: false, error: "缺少会话标识, 无法判定根/子会话 — 拒绝 (fail-closed)" }
+    return { ok: false, error: "missing session identity, cannot determine root/child session — rejected (fail-closed)" }
   }
   const dbPath = cfg.dbPath ?? defaultHostDbPath()
   const session = checkCurrentSession({ dbPath, sessionID })
@@ -74,10 +74,10 @@ export function openStoreFor(cfg) {
 /** Human-facing hint for a closed/unavailable store (never auto-init). */
 export function storeOpenError(err) {
   if (err instanceof StoreError && err.code === "STORE_MISSING") {
-    return "memory store 未初始化 — 请先运行 supervisor-memory CLI 的 init 命令(缺失的库不会被自动创建)"
+    return "memory store not initialized — run the supervisor-memory CLI init command first (a missing database is never auto-created)"
   }
   const code = err instanceof StoreError ? err.code : "UNKNOWN"
-  return `memory store 打开失败 (${code}): ${err?.message ?? err} — 本次拒绝(fail-closed)`
+  return `memory store failed to open (${code}): ${err?.message ?? err} — rejected this call (fail-closed)`
 }
 
 /** Isolated directory for mock receipts — never the production store root. */

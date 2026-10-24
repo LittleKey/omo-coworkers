@@ -253,7 +253,7 @@ test("T2 subagent caller (current session parent_id non-null) → rejected", asy
   const storeRoot = makeStoreRoot(t)
   const { tool } = await registeredTool(t, { dbPath, storeRoot })
   const res = await tool.execute({ description: "x", evidence: "msg_user_a1" }, { sessionID: "ses_child_a" })
-  expectReject(res, "只能在根会话使用")
+  expectReject(res, "can only be used in a root session")
   assert.equal(openStore(storeRoot, QUICK).listEvents().length, 0)
 })
 
@@ -270,7 +270,7 @@ test("T2 current session row with NULL project_id → rejected fail-closed", asy
   const storeRoot = makeStoreRoot(t)
   const { tool } = await registeredTool(t, { dbPath, storeRoot })
   const res = await tool.execute({ description: "x", evidence: "msg_user_a1" }, { sessionID: "ses_noproj" })
-  expectReject(res, "项目身份")
+  expectReject(res, "project identity")
   assert.equal(openStore(storeRoot, QUICK).listEvents().length, 0)
 })
 
@@ -309,7 +309,7 @@ test("T2 unknown issueId → rejected, no issue silently created", async (t) => 
     { description: "x", evidence: "msg_user_a1", issueId: "ISS_MISSING" },
     { sessionID: "ses_root_a" },
   )
-  expectReject(res, "不存在")
+  expectReject(res, "does not exist in the store")
   assert.equal(openStore(storeRoot, QUICK).listIssues().length, before)
   assert.equal(openStore(storeRoot, QUICK).listEvents().length, 0)
 })
@@ -326,7 +326,7 @@ test("T2 cross-project issueId → rejected", async (t) => {
     { description: "x", evidence: "msg_user_a1", issueId: seeded.id },
     { sessionID: "ses_root_a" },
   )
-  expectReject(res, "其他项目")
+  expectReject(res, "another project")
 })
 
 test("T2 serial + concurrent duplicate sources → exactly one event, duplicate receipts", async (t) => {
@@ -433,7 +433,7 @@ test("T2 fallback: session without any user message → rejected fail-closed", a
   const storeRoot = makeStoreRoot(t)
   const { tool } = await registeredTool(t, { dbPath, storeRoot })
   const res = await tool.execute({ description: "x" }, { sessionID: "ses_nouser" })
-  expectReject(res, "触发用户消息")
+  expectReject(res, "triggering user message")
   assert.equal(openStore(storeRoot, QUICK).listEvents().length, 0)
 })
 

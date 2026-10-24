@@ -187,7 +187,7 @@ supervisor-memory digest
 supervisor-memory digest --draft ISS-ab12cd34   # optional: model-drafted body
 supervisor-memory approve ISS-ab12cd34          # 3-stage TTY review
 #   → prints the exact patch; you paste it into the target AGENTS.md yourself
-supervisor-memory digest                        # D9 check now shows 在场 / 待人工应用
+supervisor-memory digest                        # D9 check now shows present / awaiting manual application
 ```
 
 A publish target must satisfy all three conditions (D8 + A2): the file

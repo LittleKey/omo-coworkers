@@ -224,7 +224,7 @@ function findCurrentTurnUserMessage({ dbPath, sessionID }) {
     }
   }
   if (!row) {
-    return { ok: false, reason: "当前会话没有可登记的触发用户消息 — 回退失败, 拒绝 (fail-closed)" }
+    return { ok: false, reason: "current session has no recordable triggering user message — fallback failed, rejected (fail-closed)" }
   }
   return { ok: true, messageId: row.id }
 }
@@ -257,7 +257,7 @@ export async function executeReportCorrection(rawArgs, context, { cfg }) {
   try {
     return await runReportCorrection(rawArgs, context, { cfg })
   } catch (err) {
-    return { ok: false, error: `report_correction 内部错误: ${err?.message ?? err}` }
+    return { ok: false, error: `report_correction internal error: ${err?.message ?? err}` }
   }
 }
 
@@ -276,7 +276,7 @@ async function runReportCorrection(rawArgs, context, { cfg }) {
   // Argument shape.
   const description = typeof args.description === "string" ? args.description.trim() : ""
   if (description.length === 0) {
-    return { ok: false, error: "description 必须是一句非空描述" }
+    return { ok: false, error: "description must be a non-empty one-sentence description" }
   }
   const topic = typeof args.topic === "string" && args.topic.length > 0 ? args.topic.slice(0, 100) : null
   // evidence is now omittable: omitted/empty OR all-unresolvable-ACP-refs
@@ -293,7 +293,7 @@ async function runReportCorrection(rawArgs, context, { cfg }) {
   if (evidenceExplicit) {
     evidenceIds = normalizeEvidenceIds(args.evidence)
     if (!evidenceIds) {
-      return { ok: false, error: "evidence 必须是真实用户消息 ID(单 ID 或 1..3 个非空字符串)" }
+      return { ok: false, error: "evidence must be real user message IDs (a single ID or 1..3 non-empty strings)" }
     }
   }
   const issueIdArg =
@@ -303,7 +303,7 @@ async function runReportCorrection(rawArgs, context, { cfg }) {
         ? args.issueId
         : null
   if (args.issueId !== undefined && args.issueId !== null && issueIdArg === null) {
-    return { ok: false, error: "issueId 必须是已有问题候选的 ID 字符串" }
+    return { ok: false, error: "issueId must be a string ID of an existing issue candidate" }
   }
 
   // ② validate each evidence independently; any invalid → reject the whole
@@ -326,19 +326,19 @@ async function runReportCorrection(rawArgs, context, { cfg }) {
         unresolvableRef = { id, reason: v.reason }
         continue
       }
-      return { ok: false, error: `evidence 校验失败 (${id}): ${v.reason}` }
+      return { ok: false, error: `evidence validation failed (${id}): ${v.reason}` }
     }
   }
   let evidenceVia = "explicit-ids"
   if (!evidenceExplicit || unresolvableRef !== null) {
     if (unresolvableRef !== null && validated.length > 0) {
       // mixed resolvable + unresolvable-ACP-ref → no fallback, hard reject
-      return { ok: false, error: `evidence 校验失败 (${unresolvableRef.id}): ${unresolvableRef.reason}` }
+      return { ok: false, error: `evidence validation failed (${unresolvableRef.id}): ${unresolvableRef.reason}` }
     }
     const fb = findCurrentTurnUserMessage({ dbPath, sessionID })
     if (!fb.ok) return { ok: false, error: fb.reason }
     const v = validateEvidence({ dbPath, messageId: fb.messageId, currentProjectId: projectId })
-    if (!v.ok) return { ok: false, error: `当前用户消息校验失败 (${fb.messageId}): ${v.reason}` }
+    if (!v.ok) return { ok: false, error: `current user message validation failed (${fb.messageId}): ${v.reason}` }
     validated.length = 0
     validated.push(v)
     evidenceIds = [fb.messageId]
@@ -356,10 +356,10 @@ async function runReportCorrection(rawArgs, context, { cfg }) {
     }
     const issue = store.getIssue(issueIdArg) // throws (fail-closed) on damaged stores
     if (!issue) {
-      return { ok: false, error: `issueId ${issueIdArg} 不存在 — 本次拒绝, 不静默新建 (D3)` }
+      return { ok: false, error: `issueId ${issueIdArg} does not exist in the store — rejected this call, never silently created (D3)` }
     }
     if (issue.projectId !== projectId) {
-      return { ok: false, error: `issueId ${issueIdArg} 属于其他项目 — 本次拒绝 (D3/D4)` }
+      return { ok: false, error: `issueId ${issueIdArg} belongs to another project — rejected this call (D3/D4)` }
     }
   }
 
@@ -376,7 +376,7 @@ async function runReportCorrection(rawArgs, context, { cfg }) {
       evidenceVia,
       description,
       topic,
-      note: "mock 回执 — 未写入生产存储",
+      note: "mock receipt — nothing written to the production store",
     })
     return {
       ack: true,
@@ -384,7 +384,7 @@ async function runReportCorrection(rawArgs, context, { cfg }) {
       issueId: "MOCK",
       eventId: `MOCK-${randomBytes(4).toString("hex")}`,
       evidenceVia,
-      note: "mock 回执: 校验已通过, 未写入任何存储",
+      note: "mock receipt: validation ran fully, nothing written to any store",
     }
   }
 
@@ -421,6 +421,6 @@ async function runReportCorrection(rawArgs, context, { cfg }) {
     eventId: canonicalEventId,
     evidenceVia,
     ...(duplicate ? { duplicate: true } : {}),
-    note: "已登记进入待审队列; 用户可通过 supervisor-memory CLI 的 digest 命令复核处理",
+    note: "recorded into the pending review queue; the user can review it via the supervisor-memory CLI digest command",
   }
 }

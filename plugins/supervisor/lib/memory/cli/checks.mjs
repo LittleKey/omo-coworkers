@@ -120,7 +120,7 @@ export function readonlyCheck(rules, decisions) {
             : null,
         note:
           rec.state === "awaiting-apply" && isPresent(observed)
-            ? "已观察到在场 — 看起来已手工应用但未登记 publish 结果"
+            ? "observed present — looks manually applied but the publish result was never recorded"
             : null,
       }
       rows.push(row)

@@ -208,23 +208,23 @@ export function generateRemove(fileContent, { ruleId }) {
  * why this target / scope promise / tracking status). Pure string output.
  */
 export function formatPatch({ targetPath, why, scopePromise, tracked, patch }) {  const L = []
-  L.push(`--- 目标: ${targetPath}`)
-  L.push(`    为什么是这个目标: ${why}`)
-  L.push(`    范围承诺: ${scopePromise}`)
-  L.push(`    跟踪状态: ${tracked}`)
-  L.push(`    操作: ${patch.action} — ${patch.anchor}`)
-  for (const n of patch.notes ?? []) L.push(`    注: ${n}`)
+  L.push(`--- target: ${targetPath}`)
+  L.push(`    why this target: ${why}`)
+  L.push(`    scope promise: ${scopePromise}`)
+  L.push(`    tracking: ${tracked}`)
+  L.push(`    action: ${patch.action} — ${patch.anchor}`)
+  for (const n of patch.notes ?? []) L.push(`    note: ${n}`)
   if (patch.removed !== undefined) {
-    L.push(`    被移除/替换的旧内容 (${patch.removed.split("\n").length} 行):`)
+    L.push(`    old content removed/replaced (${patch.removed.split("\n").length} lines):`)
     for (const l of patch.removed.split("\n")) L.push(`      | ${l}`)
   }
   if (patch.action !== "remove") {
     L.push(
-      `    应用方式: 将以下块整体${patch.action === "add" ? "追加到文件末尾" : "替换旧段"}(手工粘贴; 插件对目标文件零写入):`,
+      `    how to apply: take the whole block below and ${patch.action === "add" ? "append it to the end of the file" : "replace the old segment with it"} (manual paste; the plugin never writes to the target file):`,
     )
-    L.push("    ──── 复制开始 ────")
+    L.push("    ──── COPY START ────")
     for (const l of patch.block.split("\n")) L.push(`    ${l}`)
-    L.push("    ──── 复制结束 ────")
+    L.push("    ──── COPY END ────")
   }
   return L.join("\n")
 }

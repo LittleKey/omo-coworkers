@@ -144,7 +144,7 @@ test("draft_rule: 草稿落盘 drafts.json 且与 CLI 共存(同一 saveDraft �
   assert.equal(res.ack, true)
   assert.equal(res.draftId, issueId)
   assert.equal(res.body, APPROVE_BODY)
-  assert.match(res.note, /未批准、未生效/)
+  assert.match(res.note, /not approved, not in effect/)
   const view = readDrafts(cfg.storeRoot)
   assert.equal(view.drafts[issueId].body, APPROVE_BODY, "tool write lands in the shared CLI view")
   assert.ok(typeof view.drafts[issueId].ts === "number")
@@ -167,13 +167,13 @@ test("draft_rule: 不存在 / 跨项目 / 非 draft / 空正文 / 超 10 行 →
   const issueId = seedIssue(store)
   const foreignIssueId = seedIssue(store, { projectId: PROJ_B, sessionId: "ses_root_b", messageId: "msg_b" })
 
-  expectReject(await executeDraftTool(cfg, { issueId: "ISS-nothere", body: APPROVE_BODY }), "不存在")
-  expectReject(await executeDraftTool(cfg, { issueId: foreignIssueId, body: APPROVE_BODY }), "其他项目")
+  expectReject(await executeDraftTool(cfg, { issueId: "ISS-nothere", body: APPROVE_BODY }), "does not exist in the store")
+  expectReject(await executeDraftTool(cfg, { issueId: foreignIssueId, body: APPROVE_BODY }), "another project")
   store.upsertIssue({ id: issueId, status: "approved" })
   expectReject(await executeDraftTool(cfg, { issueId, body: APPROVE_BODY }), "approved")
-  expectReject(await executeDraftTool(cfg, { issueId, body: "   \n  " }), "正文为空")
+  expectReject(await executeDraftTool(cfg, { issueId, body: "   \n  " }), "body is empty")
   const long = Array.from({ length: 11 }, (_, i) => `line ${i + 1}`).join("\n")
-  expectReject(await executeDraftTool(cfg, { issueId, body: long }), "10 行")
+  expectReject(await executeDraftTool(cfg, { issueId, body: long }), "-line limit")
   assert.equal(Object.keys(readDrafts(cfg.storeRoot).drafts).length, 0, "nothing written on any rejection")
 })
 
@@ -181,7 +181,7 @@ test("draft_rule: 子会话调用 → 拒绝 (fail-closed)", async (t) => {
   const cfg = makeCfg(t)
   const store = openStore(cfg.storeRoot, QUICK)
   const issueId = seedIssue(store)
-  expectReject(await executeDraftTool(cfg, { issueId, body: APPROVE_BODY }, { sessionID: "ses_child_a" }), "只能在根会话使用")
+  expectReject(await executeDraftTool(cfg, { issueId, body: APPROVE_BODY }, { sessionID: "ses_child_a" }), "can only be used in a root session")
   assert.equal(Object.keys(readDrafts(cfg.storeRoot).drafts).length, 0)
 })
 
@@ -216,10 +216,10 @@ test("prepare_publish: 未批准 → 拒绝(不存在 / draft 候选 id / 已停
   const approved = approveRule(store, { file })
   const issueId = seedIssue(store)
 
-  expectReject(await executePrepareTool(cfg, { ruleId: "RUL-nothere" }), "不存在")
-  expectReject(await executePrepareTool(cfg, { ruleId: issueId }), "不存在")
+  expectReject(await executePrepareTool(cfg, { ruleId: "RUL-nothere" }), "does not exist in the store")
+  expectReject(await executePrepareTool(cfg, { ruleId: issueId }), "does not exist in the store")
   store.recordDecision({ kind: "disable", ruleId: approved.rule.id })
-  expectReject(await executePrepareTool(cfg, { ruleId: approved.rule.id }), "已停用")
+  expectReject(await executePrepareTool(cfg, { ruleId: approved.rule.id }), "is disabled")
 })
 
 test("prepare_publish: 补丁文本与 CLI 生成为字节一致, 回执明示未应用", async (t) => {
@@ -234,8 +234,8 @@ test("prepare_publish: 补丁文本与 CLI 生成为字节一致, 回执明示�
   assert.equal(res.applied, false)
   assert.equal(res.patches.length, 1)
   assert.equal(res.patches[0].path, file)
-  assert.match(res.note, /未应用/)
-  assert.match(res.note, /人审 CLI/)
+  assert.match(res.note, /not applied/)
+  assert.match(res.note, /human-review CLI/)
 
   // Byte-identical to the CLI approve printer for the same object: the shared
   // formatRulePatch composition with the CURRENT candidate context (note is
@@ -267,12 +267,12 @@ test("prepare_publish: 目标不满足 D8 → 拒绝(文件缺失 / 范围不一
 
   // file missing → never create new files
   fs.rmSync(file)
-  expectReject(await executePrepareTool(cfg, { ruleId: rule.id }), "不存在")
+  expectReject(await executePrepareTool(cfg, { ruleId: rule.id }), "does not exist")
   fs.writeFileSync(file, "# agents\n", { mode: 0o600 })
 
   // scope mismatch: a rule approved for proj_b cannot target proj_a's file
   const foreign = approveRule(store, { file, scope: { kind: "project", projectId: PROJ_B } })
-  expectReject(await executePrepareTool(cfg, { ruleId: foreign.rule.id }), "范围不一致")
+  expectReject(await executePrepareTool(cfg, { ruleId: foreign.rule.id }), "inconsistent with the rule's approved scope")
 
   // marker anomaly in target → fail-closed, human review (the patch builder
   // raises in English; the tool wraps it verbatim under 补丁生成失败)
@@ -285,7 +285,7 @@ test("prepare_publish: 目录未确认 → 拒绝(目录确认是人的显式操
   const store = openStore(cfg.storeRoot, QUICK)
   const { file } = makeTarget(t, store, { confirm: false })
   const { rule } = approveRule(store, { file })
-  expectReject(await executePrepareTool(cfg, { ruleId: rule.id }), "未确认")
+  expectReject(await executePrepareTool(cfg, { ruleId: rule.id }), "unconfirmed")
 })
 
 // ---------- memory_status ----------

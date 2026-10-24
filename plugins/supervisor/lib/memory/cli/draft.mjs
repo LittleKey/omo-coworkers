@@ -26,16 +26,16 @@ export function buildDraftPrompt(issue, events) {
     {
       role: "system",
       content:
-        "你是 AGENTS.md 规则草稿助手。根据候选纠偏事件起草一条稳定的 agent 行为规则。要求: 祈使句、可长期遵循、不引用具体会话、不超过 10 行、不要输出任何 HTML 注释或 marker。",
+        "You are an AGENTS.md rule-drafting assistant. From the candidate correction events, draft one durable agent behavior rule. Requirements: imperative sentences, followable long-term, no references to specific sessions, at most 10 lines, and no HTML comments or markers of any kind.",
     },
     {
       role: "user",
       content:
-        `候选标题: ${issue.title}\n` +
-        `主题: ${issue.topic ?? "未知"}\n` +
-        `分类: ${issue.classification?.kind ?? "未知"}\n` +
-        `纠偏摘录(仅此候选, 共 ${events.length} 条):\n${lines.join("\n") || "(无)"}\n` +
-        `请只输出规则正文本身。`,
+        `candidate title: ${issue.title}\n` +
+        `topic: ${issue.topic ?? "unknown"}\n` +
+        `classification: ${issue.classification?.kind ?? "unknown"}\n` +
+        `correction excerpts (this candidate only, ${events.length} in total):\n${lines.join("\n") || "(none)"}\n` +
+        `Output the rule body itself, nothing else.`,
     },
   ]
 }
@@ -65,11 +65,11 @@ export async function draftOnce({ issue, events, env, fetchImpl, timeoutMs = DRA
     const data = await res.json()
     const text = data?.choices?.[0]?.message?.content
     if (typeof text !== "string" || text.trim().length === 0) {
-      return { status: "failed", error: "模型返回空内容" }
+      return { status: "failed", error: "model returned empty content" }
     }
     return { status: "ok", text }
   } catch (e) {
-    if (ac.signal.aborted) return { status: "timeout", error: `超过 ${timeoutMs}ms 未响应` }
+    if (ac.signal.aborted) return { status: "timeout", error: `no response within ${timeoutMs}ms` }
     return { status: "failed", error: String(e?.message ?? e) }
   } finally {
     clearTimeout(timer)

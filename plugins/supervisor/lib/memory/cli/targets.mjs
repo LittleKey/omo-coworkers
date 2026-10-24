@@ -32,12 +32,12 @@ export function gitTracked(dir, relPath) {
   try {
     r = spawnSync("git", ["-C", dir, "ls-files", "--", relPath], { encoding: "utf8", timeout: 5000 })
   } catch {
-    return { tracked: false, note: "git 不可用 — 按未跟踪对待" }
+    return { tracked: false, note: "git unavailable — treated as untracked" }
   }
-  if (r.error) return { tracked: false, note: "git 不可用 — 按未跟踪对待" }
-  if (r.status !== 0) return { tracked: false, note: "非 git 仓库 — 按未跟踪对待" }
+  if (r.error) return { tracked: false, note: "git unavailable — treated as untracked" }
+  if (r.status !== 0) return { tracked: false, note: "not a git repository — treated as untracked" }
   const tracked = r.stdout.trim().length > 0
-  return { tracked, note: tracked ? "被 git 跟踪" : "git 未跟踪" }
+  return { tracked, note: tracked ? "git-tracked" : "not git-tracked" }
 }
 
 /**
@@ -73,7 +73,7 @@ export function candidateTargets({ scope, projects, cwd, home }) {
         exists: fileExists(p),
         ...gitTracked(d.path, "AGENTS.md"),
         confirmedDir: d.confirmed === true,
-        notes: d.confirmed ? [] : ["目录未确认(projects.json) — 选择即显式登记并确认"],
+        notes: d.confirmed ? [] : ["directory unconfirmed (projects.json) — selecting it registers and confirms it explicitly"],
       })
     }
     if (cwd && !(proj?.directories ?? []).some((d) => d.path === cwd)) {
@@ -86,7 +86,7 @@ export function candidateTargets({ scope, projects, cwd, home }) {
         exists: fileExists(p),
         ...gitTracked(cwd, "AGENTS.md"),
         confirmedDir: false,
-        notes: ["当前目录未登记于该 project_id — 选择即登记并确认"],
+        notes: ["current directory not registered under this project_id — selecting it registers and confirms it"],
       })
     }
   } else if (scope.kind === "directory") {
@@ -107,10 +107,10 @@ export function candidateTargets({ scope, projects, cwd, home }) {
 /** Boundary note: why this file is the right target for this scope (A2). */
 export function whyTarget(t) {
   if (t.kind === "user-global") {
-    return "user-global 规则 → 全局 ~/.config/opencode/AGENTS.md(实测 v2.1.2 仅加载 AGENTS.md, 全局最先合并 — A2)"
+    return "user-global rule → global ~/.config/opencode/AGENTS.md (measured on v2.1.2: only AGENTS.md is loaded, global merges first — A2)"
   }
   if (t.kind === "project") {
-    return "project 规则 → 该项目目录根的 AGENTS.md(会话自 cwd 向上最近→最远合并, 子树内会话都继承根文件; 已按目录逐项确认)"
+    return "project rule → the AGENTS.md at the project directory root (sessions merge nearest→farthest upward from cwd, sessions in the subtree all inherit the root file; confirmed per directory)"
   }
-  return "directory 规则 → 该目录自己的 AGENTS.md(仅 cwd 在其子树内的会话加载; 不回退到项目根文件)"
+  return "directory rule → that directory's own AGENTS.md (loaded only by sessions whose cwd is inside its subtree; no fallback to the project root file)"
 }

@@ -42,7 +42,7 @@ export async function executeMemoryStatus(rawArgs, context, { cfg }) {
   try {
     return await runMemoryStatus(context, { cfg })
   } catch (err) {
-    return { ok: false, error: `memory_status 内部错误: ${err?.message ?? err}` }
+    return { ok: false, error: `memory_status internal error: ${err?.message ?? err}` }
   }
 }
 
@@ -87,6 +87,6 @@ async function runMemoryStatus(_context, { cfg }) {
     projectId,
     rules,
     pending: { candidates: pending.issues.length, events: pending.events.length },
-    note: "最小信息视图; 人审入口: supervisor-memory CLI 的 digest 命令",
+    note: "minimal information view; human-review entry point: the supervisor-memory CLI digest command",
   }
 }

@@ -476,8 +476,8 @@ test("nudge: rule-specific hints are reachable for every emitted ruleId (keys ma
   for (const ruleId of emitted) {
     const c = { ruleId, ruleVersion: 1, binding: { sessionId: "s", userTurnId: "u", turnCount: 1, evidenceHash: "h" }, evidence: {} }
     const text = formatNudge(c, CFG.nudgeMaxChars)
-    assert.ok(!text.includes("Supervisor L0 信号。"), `ruleId ${ruleId} fell into the generic fallback — RULE_HINTS key does not match the emitted ruleId`)
-    assert.ok(text.includes("建议"), `ruleId ${ruleId} hint text missing`)
+    assert.ok(!text.includes("Supervisor L0 signal."), `ruleId ${ruleId} fell into the generic fallback — RULE_HINTS key does not match the emitted ruleId`)
+    assert.ok(text.includes("review"), `ruleId ${ruleId} hint text missing`)
   }
 })
 

@@ -42,7 +42,7 @@ export function makeRealIO() {
         const a = (await rl.question(`${prompt} [1-${options.length}] `)).trim()
         const n = Number(a)
         if (Number.isInteger(n) && n >= 1 && n <= options.length) return n - 1
-        console.log("  无效序号, 请重试。")
+        console.log("  invalid selection number, please retry.")
       }
     },
     input: async (prompt, def = "") => {
@@ -50,7 +50,7 @@ export function makeRealIO() {
       return a.trim() === "" ? def : a.trim()
     },
     inputLines: async (prompt) => {
-      console.log(`${prompt}: 逐行输入, 单独一行 . 结束:`)
+      console.log(`${prompt}: one line at a time; a lone . ends input:`)
       const lines = []
       for (;;) {
         const l = await rl.question("")
@@ -67,15 +67,15 @@ export function makeRealIO() {
 
 export function humanStoreError(e) {
   if (!(e instanceof StoreError)) return e?.message ?? String(e)
-  const prefix = `错误[${e.code}]`
-  if (e.code === "STORE_MISSING") return `${prefix} 库不存在 — 先运行 init(缺库不是全新安装, 不自动创建)。`
+  const prefix = `error[${e.code}]`
+  if (e.code === "STORE_MISSING") return `${prefix} store does not exist — run init first (a missing store is not a fresh install; it is never auto-created).`
   if (e.code === "STORE_SCHEMA")
-    return `${prefix} store schema 版本不匹配。升级路径: 停用旧版本工具 → 备份整个库目录 → 升级 CLI 与 store 后按新版说明迁移; 不要原地混用新旧工具。`
+    return `${prefix} store schema version mismatch. Upgrade path: disable the old tool version → back up the whole store directory → upgrade the CLI and store, then migrate per the new version's instructions; never mix old and new tools in place.`
   if (e.code === "STORE_INCOMPLETE")
-    return `${prefix} 存在未完成提交 — 授权输出已关闭(不发布/不改状态/不生成补丁)。请按 doctor 的差异报告人工解决(备份还原; v1 无 rebuild)。`
-  if (e.code === "STORE_LOCKED") return `${prefix} 库被其他进程锁定, 写入失败且未覆盖。稍后重试; 若持有进程已死, 锁会在宽限期后自动恢复。`
-  if (e.code === "STORE_PERM") return `${prefix} 权限问题 — 库目录应为 0700、文件 0600。`
-  if (e.code === "STORE_CORRUPT") return `${prefix} 库已损坏, 已拒绝操作(fail-closed)。请从备份还原; 不要手工修补。`
+    return `${prefix} an incomplete commit exists — authorization output is disabled (no publishing, no status changes, no patches). Resolve it manually per the doctor diff report (restore from backup; v1 has no rebuild).`
+  if (e.code === "STORE_LOCKED") return `${prefix} the store is locked by another process; the write failed and did not overwrite. Retry later; if the holding process is dead, the lock auto-recovers after the grace period.`
+  if (e.code === "STORE_PERM") return `${prefix} permission problem — the store directory should be 0700 and files 0600.`
+  if (e.code === "STORE_CORRUPT") return `${prefix} the store is corrupt; the operation was refused (fail-closed). Restore from backup; do not hand-patch.`
   return `${prefix} ${e.message}`
 }
 
@@ -101,7 +101,7 @@ export function openStoreChecked(root) {
     if (doc && typeof doc === "object" && (doc.schema !== SCHEMA_ID || doc.version !== SCHEMA_VERSION)) {
       throw new StoreError(
         "STORE_SCHEMA",
-        `${f} 是 ${JSON.stringify(doc.schema)}/${JSON.stringify(doc.version)}, 本工具需要 ${SCHEMA_ID}/${SCHEMA_VERSION}`,
+        `${f} is ${JSON.stringify(doc.schema)}/${JSON.stringify(doc.version)}, this tool requires ${SCHEMA_ID}/${SCHEMA_VERSION}`,
       )
     }
   }
@@ -143,7 +143,7 @@ export function weeklyCounts(store, weekStartTs) {
   return { candidates, approved, dropped, recurrences }
 }
 
-const UNKNOWN = "未知"
+const UNKNOWN = "unknown"
 
 function weeklySection(store, root, flags, nowTs, { write = true } = {}) {
   const weekStart = flags.week ? parseWeekFlag(flags.week) : isoWeekMonday(nowTs).getTime()
@@ -180,65 +180,65 @@ function parseWeekFlag(w) {
 // ---------- digest rendering ----------
 
 const STATE_LABEL = {
-  approved: "已批准(应在场)",
-  "awaiting-apply": "待人工应用",
-  "readonly-disabled": "已停用(应离场)",
-  "readonly-old-version": "旧版本(应离场)",
+  approved: "approved (should be present)",
+  "awaiting-apply": "awaiting manual application",
+  "readonly-disabled": "disabled (should be absent)",
+  "readonly-old-version": "old version (should be absent)",
 }
 const OBSERVED_LABEL = {
-  present: "在场",
-  "present-unmarked": "在场(无 marker 包裹)",
-  absent: "离场",
-  "target-missing": "目标文件缺失",
-  "target-changed": "目标已变更",
-  "marker-anomaly": "marker 异常",
-  "other-version": "存在其他版本段",
+  present: "present",
+  "present-unmarked": "present (no wrapping marker)",
+  absent: "absent",
+  "target-missing": "target file missing",
+  "target-changed": "target changed",
+  "marker-anomaly": "marker anomaly",
+  "other-version": "a segment of another version exists",
 }
 
 function printPending(store, pending) {
-  console.log(`待审: ${pending.issues.length} 个候选, ${pending.events.length} 个待审事件`)
+  console.log(`pending review: ${pending.issues.length} candidates, ${pending.events.length} pending events`)
   for (const iss of pending.issues) {
-    console.log(`\n[${iss.id}] ${iss.title} (状态 ${iss.status}, 复发 ${iss.recurrence}, 项目 ${iss.projectId ?? "未知"}, 创建 ${new Date(iss.createdAtTs).toISOString()})`)
-    if (iss.topic) console.log(`  主题: ${iss.topic}`)
+    console.log(`\n[${iss.id}] ${iss.title} (status ${iss.status}, recurrences ${iss.recurrence}, project ${iss.projectId ?? "unknown"}, created ${new Date(iss.createdAtTs).toISOString()})`)
+    if (iss.topic) console.log(`  topic: ${iss.topic}`)
     const evs = store.listEvents({ issueId: iss.id })
     for (const e of evs) {
-      console.log(`  事件 ${e.id} [${e.status}] ${new Date(e.ts).toISOString()} 来源 session=${e.source?.sessionId} project=${e.source?.projectId}`)
-      console.log(`    摘录: ${(e.evidence?.excerpt ?? "").replace(/\n/g, " ⏎ ").slice(0, 300)}`)
+      console.log(`  event ${e.id} [${e.status}] ${new Date(e.ts).toISOString()} source session=${e.source?.sessionId} project=${e.source?.projectId}`)
+      console.log(`    excerpt: ${(e.evidence?.excerpt ?? "").replace(/\n/g, " ⏎ ").slice(0, 300)}`)
     }
   }
   const orphans = pending.events.filter((e) => !e.resolvedIssue)
   if (orphans.length > 0) {
-    console.log(`\n无归属候选的待审事件: ${orphans.length} 个`)
+    console.log(`\npending events without an owning candidate: ${orphans.length}`)
     for (const e of orphans) console.log(`  ${e.id} ${new Date(e.ts).toISOString()} ${e.evidence?.excerpt?.slice(0, 120) ?? ""}`)
   }
 }
 
 function printChecks(checks) {
   if (checks.rows.length === 0) {
-    console.log("只读检查: 无已发布记录 — 无可核对目标。")
+    console.log("read-only check: no published records — no targets to verify.")
     return
   }
-  console.log(`只读检查(空白规范化比对; 只报告, 不改写, 对目标文件零写入): ${checks.rows.length} 项`)
+  console.log(`read-only check (whitespace-normalized comparison; reports only, never rewrites, zero writes to target files): ${checks.rows.length} item(s)`)
   for (const r of checks.rows) {
-    const ver = r.version === null ? "旧版" : `v${r.version}`
+    const ver = r.version === null ? "old" : `v${r.version}`
     console.log(`  ${r.ruleId} ${ver} [${STATE_LABEL[r.state] ?? r.state}] ${r.target} → ${OBSERVED_LABEL[r.observed] ?? r.observed}${r.note ? ` (${r.note})` : ""}`)
   }
   for (const r of checks.rows.filter((x) => x.drift)) {
-    console.log(`  ⚠ 漂移: ${r.ruleId} 期望在场, 实际 ${OBSERVED_LABEL[r.drift]} — 只报告不改写。`)
+    console.log(`  ⚠ drift: ${r.ruleId} expected present, actually ${OBSERVED_LABEL[r.drift]} — report only, never rewrite.`)
   }
   for (const r of checks.rows.filter((x) => x.residue)) {
-    console.log(`  ⚠ 残留: ${r.ruleId}(已停用/旧版本)在目标仍可见 — 只报告不改写。`)
+    console.log(`  ⚠ residue: ${r.ruleId} (disabled/old version) still visible in the target — report only, never rewrite.`)
   }
   for (const r of checks.reviewNeeded) {
-    console.log(`  ⚠ 目标已变更 → 送人审(不推断为用户删除): ${r.target}(${r.ruleId})`)
+    console.log(`  ⚠ target changed → send for human review (never inferred as user deletion): ${r.target}(${r.ruleId})`)
   }
 }
 
 function printWeekly(w) {
   const sr = w.selfReport
-  console.log(`\n周报 ${w.key}: 候选 ${w.counts.candidates} / 批准 ${w.counts.approved} / 丢弃 ${w.counts.dropped} / 复发 ${w.counts.recurrences}`)
-  console.log(`自报: 处理耗时(分钟) ${sr.spentMinutes ?? UNKNOWN}; 重复负担 ${sr.dupBurden ?? UNKNOWN}; 漏记体验 ${sr.missedExperience ?? UNKNOWN}; 手动整理增量(不靠系统能否想起该候选) ${sr.manualIncrement ?? UNKNOWN}`)
-  console.log(`注: 计数与自报字段仅供回顾, 缺失即未知; 计数不单独构成「省事」结论(D10)。`)
+  console.log(`\nweekly report ${w.key}: candidates ${w.counts.candidates} / approved ${w.counts.approved} / dropped ${w.counts.dropped} / recurrences ${w.counts.recurrences}`)
+  console.log(`self-reported: time spent (minutes) ${sr.spentMinutes ?? UNKNOWN}; duplicate burden ${sr.dupBurden ?? UNKNOWN}; missed-recording experience ${sr.missedExperience ?? UNKNOWN}; manual-review increment (could the candidate be recalled without the system?) ${sr.manualIncrement ?? UNKNOWN}`)
+  console.log(`note: counts and self-reported fields are for review only; missing means unknown; counts alone never establish an "effort-saving" conclusion (D10).`)
 }
 
 // ---------- subcommands ----------
@@ -246,13 +246,13 @@ function printWeekly(w) {
 export function runInit(root) {
   try {
     const r = initStore(root)
-    console.log(`已初始化 memory store: ${r.root}`)
+    console.log(`memory store initialized: ${r.root}`)
     for (const f of r.files) console.log(`  ${f}`)
-    console.log(`  digest/(重建型视图)`)
+    console.log(`  digest/ (rebuildable view)`)
     return 0
   } catch (e) {
     if (e instanceof StoreError && e.code === "STORE_EXISTS") {
-      console.error(`错误: ${e.message}(已存在的库不会被覆盖)。`)
+      console.error(`error: ${e.message} (an existing store is never overwritten).`)
       return 1
     }
     throw e
@@ -267,19 +267,19 @@ export async function runDigest(ctx, flags) {
     return runDraft(ctx, id, flags)
   }
   const st = store.status()
-  const banner = (s) => console.log(`memory store @ ${st.root} — 健康状态: ${s}`)
+  const banner = (s) => console.log(`memory store @ ${st.root} — health: ${s}`)
   banner(st.health.status)
   if (st.health.status === "incomplete_commit") {
-    console.log("⚠ 授权关闭: 存在未完成提交 — 以下仅为展示, 不写视图、不产生批准/补丁。")
+    console.log("⚠ authorization disabled: an incomplete commit exists — the output below is display only; no views are written and no approvals/patches are produced.")
     const inc = st.incomplete
     if (inc) {
       const landed = inc.files.filter((f) => f.landed).map((f) => f.path)
       const missing = inc.files.filter((f) => !f.landed).map((f) => f.path)
-      console.log(`  事务 ${inc.txnId}(${inc.op}): 已落盘 [${landed.join(", ") || "无"}], 未落盘 [${missing.join(", ") || "无"}]`)
+      console.log(`  transaction ${inc.txnId}(${inc.op}): landed [${landed.join(", ") || "none"}], not landed [${missing.join(", ") || "none"}]`)
     }
   } else if (st.health.status !== "ok") {
-    for (const p of st.health.problems) console.log(`  问题[${p.severity}] ${p.detail}`)
-    console.log("(完整诊断见 doctor)")
+    for (const p of st.health.problems) console.log(`  problem[${p.severity}] ${p.detail}`)
+    console.log("(full diagnostics: doctor)")
   }
   try {
     printPending(store, store.listPending())
@@ -292,7 +292,7 @@ export async function runDigest(ctx, flags) {
       writeView(store.root, "pending.json", { ts: Date.now(), ...store.listPending() })
       writeView(store.root, "checks.json", { ts: Date.now(), ...checks })
     } else {
-      console.log("(视图未写: 健康状态非 ok)")
+      console.log("(views not written: health status is not ok)")
     }
   } catch (e) {
     console.error(humanStoreError(e))
@@ -305,7 +305,7 @@ export async function runDigest(ctx, flags) {
 export async function runDraft(ctx, id, flags) {
   const { store, io, env } = ctx
   if (typeof id !== "string" || id.length === 0) {
-    io.print("用法: supervisor-memory digest --draft <issueId>")
+    io.print("usage: supervisor-memory digest --draft <issueId>")
     return 1
   }
   let issue
@@ -316,64 +316,64 @@ export async function runDraft(ctx, id, flags) {
     return 1
   }
   if (!issue) {
-    io.print(`未找到候选 ${id}。`)
+    io.print(`issue candidate ${id} not found.`)
     return 1
   }
   if (issue.status !== "draft") {
-    io.print(`拒绝: 候选 ${id} 状态为 ${issue.status}; 仅为 draft 候选起草。`)
+    io.print(`rejected: candidate ${id} has status ${issue.status}; only draft candidates accept rule drafts.`)
     return 1
   }
   const denv = draftEnv(env ?? {})
   if (!denv.apiKey) {
-    io.print("未设置 SUPERVISOR_MEMORY_DRAFT_API_KEY — 跳过起草(未发送任何网络请求)。请人工起草。")
+    io.print("SUPERVISOR_MEMORY_DRAFT_API_KEY is not set — skipping drafting (no network request was sent). Draft manually.")
     return 0
   }
   const events = store.listEvents({ issueId: id })
-  io.print(`起草 ${id}: 外发范围仅该候选的 ${events.length} 条事件与摘录(不含全库); 模型 ${denv.model} @ ${denv.baseUrl}; 单次尝试。`)
+  io.print(`drafting ${id}: the outbound scope is exactly this candidate's ${events.length} events and their excerpts (never the whole store); model ${denv.model} @ ${denv.baseUrl}; a single attempt.`)
   const r = await draftOnce({ issue, events, env: denv, fetchImpl: ctx.fetchImpl, timeoutMs: ctx.draftTimeoutMs ?? 30_000 })
   if (r.status === "ok") {
-    io.print("── 草稿正文 ──")
+    io.print("── draft body ──")
     io.print(r.text)
-    io.print("── 结束 ──")
-    const wantStore = flags["store-draft"] === true || (io.isTTY && (await io.confirm("存为该候选的草稿?")))
+    io.print("── end ──")
+    const wantStore = flags["store-draft"] === true || (io.isTTY && (await io.confirm("Save as this candidate's draft?")))
     if (wantStore) {
       saveDraft(store.root, id, r.text, Date.now())
-      io.print(`已存入 ${path.join(store.root, "digest/drafts.json")}(重建型视图, 非授权状态)。`)
+      io.print(`stored to ${path.join(store.root, "digest/drafts.json")} (a rebuildable view, not an authorization state).`)
     }
     return 0
   }
   if (r.status === "no-key") {
-    io.print("未设置 SUPERVISOR_MEMORY_DRAFT_API_KEY — 跳过起草。请人工起草。")
+    io.print("SUPERVISOR_MEMORY_DRAFT_API_KEY is not set — skipping drafting. Draft manually.")
     return 0
   }
   recordDraftFailure(store.root, id, r.error, Date.now())
   const failures = readDrafts(store.root).failures[id]?.count ?? 1
-  io.print(`起草失败(${r.status === "timeout" ? "超时" : r.error}) — 请人工起草; 不重试, 不影响普通 digest。该候选累计失败 ${failures} 次。`)
+  io.print(`drafting failed (${r.status === "timeout" ? "timeout" : r.error}) — draft manually; no retry, and normal digest is unaffected. This candidate now has ${failures} cumulative failure(s).`)
   return 0
 }
 
 export function runDiscard(ctx, id) {
   const { store, io } = ctx
   if (typeof id !== "string" || id.length === 0) {
-    io.print("用法: supervisor-memory discard <issueId|eventId>")
+    io.print("usage: supervisor-memory discard <issueId|eventId>")
     return 1
   }
   try {
     if (id.startsWith("EVT-")) {
       store.confirmEvent(id, "false_positive")
-      io.print(`事件 ${id} 已标记误报(终态; 原始来源保留)。`)
+      io.print(`event ${id} marked as a false positive (terminal; the original source is preserved).`)
     } else {
       const iss = store.getIssue(id)
       if (!iss) {
-        io.print(`未找到候选 ${id}。`)
+        io.print(`issue candidate ${id} not found.`)
         return 1
       }
       if (iss.status !== "draft") {
-        io.print(`候选 ${id} 已是终态(${iss.status}) — 丢弃不可重复; 重新上报同一事实只会重复计数, 不恢复授权。`)
+        io.print(`candidate ${id} is already terminal (${iss.status}) — discard cannot be repeated; re-reporting the same fact only duplicates the count and never restores authorization.`)
         return 1
       }
       store.upsertIssue({ id, status: "dropped" })
-      io.print(`候选 ${id} 已丢弃(终态; 重新上报同一事实只会重复计数, 不恢复授权)。`)
+      io.print(`candidate ${id} discarded (terminal; re-reporting the same fact only duplicates the count and never restores authorization).`)
     }
     return 0
   } catch (e) {
@@ -385,12 +385,12 @@ export function runDiscard(ctx, id) {
 export function runMerge(ctx, donorId, targetId) {
   const { store, io } = ctx
   if (typeof donorId !== "string" || typeof targetId !== "string") {
-    io.print("用法: supervisor-memory merge <donorIssueId> <targetIssueId>")
+    io.print("usage: supervisor-memory merge <donorIssueId> <targetIssueId>")
     return 1
   }
   try {
     store.mergeIssues(donorId, targetId)
-    io.print(`已合并: ${donorId} → ${targetId}。双方事件的原始来源保留; 合并不连带授权、不扩大范围; 请对 ${targetId} 单独审批。`)
+    io.print(`merged: ${donorId} → ${targetId}. Both sides' original event sources are preserved; merging carries no authorization and never widens scope; approve ${targetId} separately.`)
     return 0
   } catch (e) {
     console.error(humanStoreError(e))
@@ -401,47 +401,47 @@ export function runMerge(ctx, donorId, targetId) {
 export function runDisable(ctx, ruleId) {
   const { store, io } = ctx
   if (typeof ruleId !== "string" || ruleId.length === 0) {
-    io.print("用法: supervisor-memory disable <ruleId>")
+    io.print("usage: supervisor-memory disable <ruleId>")
     return 1
   }
   try {
     store.requireHealthy()
     const rule = store.getRule(ruleId)
     if (!rule) {
-      io.print(`未找到规则 ${ruleId}。`)
+      io.print(`rule ${ruleId} not found.`)
       return 1
     }
     if (rule.status !== "active") {
-      io.print(`拒绝: 规则 ${ruleId} 当前状态 ${rule.status}; 仅 active 规则可停用。`)
+      io.print(`rejected: rule ${ruleId} currently has status ${rule.status}; only active rules can be disabled.`)
       return 1
     }
     store.recordDecision({ kind: "disable", ruleId })
-    io.print(`已停用 ${ruleId}(人的决定; 库中状态 disabled, 保留 targets)。`)
+    io.print(`disabled ${ruleId} (a human decision; store status disabled, targets preserved).`)
     io.print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-    io.print("!! 库中停用 ≠ 文件残留已撤回 — 若补丁曾被手工应用, 目标文件中的受管段落仍在, 请用下面的移除补丁手工删除。")
+    io.print("!! disabled-in-store ≠ residue withdrawn from files — if the patch was applied manually, the managed segment is still in the target file; remove it by hand with the removal patch below.")
     io.print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
     if ((rule.targets ?? []).length === 0) {
-      io.print("(该规则无已登记目标 — 从未发布, 无移除补丁。)")
+      io.print("(this rule has no registered targets — never published, no removal patch.)")
     }
     for (const t of rule.targets ?? []) {
       let content
       try {
         content = fs.readFileSync(t, "utf8")
       } catch {
-        io.print(`  目标 ${t}: 文件缺失(可能已删除; 无可移除内容)。`)
+        io.print(`  target ${t}: file missing (possibly deleted; nothing to remove).`)
         continue
       }
       try {
         const patches = generateRemove(content, { ruleId })
         if (!patches) {
-          io.print(`  目标 ${t}: 未发现该规则的受管段(未应用过或已移除)。`)
+          io.print(`  target ${t}: no managed segment for this rule (never applied, or already removed).`)
           continue
         }
         for (const p of patches) {
-          io.print(formatPatch({ targetPath: t, why: "已停用规则的已知发布目标", scopePromise: "移除整个受管段(所有版本)", tracked: p.notes?.join("; ") || "见文件", patch: p }))
+          io.print(formatPatch({ targetPath: t, why: "known publish target of the disabled rule", scopePromise: "removes the entire managed segment (all versions)", tracked: p.notes?.join("; ") || "see file", patch: p }))
         }
       } catch (e) {
-        io.print(`  目标 ${t}: marker 异常, fail-closed — ${e.message}(送人审, 不推断为用户删除)。`)
+        io.print(`  target ${t}: marker anomaly, fail-closed — ${e.message} (send for human review; never inferred as user deletion).`)
       }
     }
     return 0
@@ -455,15 +455,15 @@ export function runStatus(ctx) {
   try {
     const st = ctx.store.status()
     console.log(`memory store @ ${st.root}`)
-    console.log(`健康状态: ${st.health.status}`)
-    for (const p of st.health.problems) console.log(`  问题[${p.severity}] ${p.detail}`)
+    console.log(`health: ${st.health.status}`)
+    for (const p of st.health.problems) console.log(`  problem[${p.severity}] ${p.detail}`)
     if (st.incomplete) {
       const landed = st.incomplete.files.filter((f) => f.landed).map((f) => f.path)
       const missing = st.incomplete.files.filter((f) => !f.landed).map((f) => f.path)
-      console.log(`未完成提交 ${st.incomplete.txnId}(${st.incomplete.op}): 已落盘 [${landed.join(", ") || "无"}], 未落盘 [${missing.join(", ") || "无"}]`)
+      console.log(`incomplete commit ${st.incomplete.txnId}(${st.incomplete.op}): landed [${landed.join(", ") || "none"}], not landed [${missing.join(", ") || "none"}]`)
     }
-    console.log(`锁: ${st.lock?.exists ? `${st.lock.state}${st.lock.pid !== null ? `(pid ${st.lock.pid})` : ""}` : "无持有者"}`)
-    console.log(`计数: 规则 ${JSON.stringify(st.counts.rules)}; 候选 ${JSON.stringify(st.counts.issues)}; 事件 ${JSON.stringify(st.counts.events)}; 决定 ${JSON.stringify(st.counts.decisions)}; 项目 ${JSON.stringify(st.counts.projects)}`)
+    console.log(`lock: ${st.lock?.exists ? `${st.lock.state}${st.lock.pid !== null ? `(pid ${st.lock.pid})` : ""}` : "no holder"}`)
+    console.log(`counts: rules ${JSON.stringify(st.counts.rules)}; candidates ${JSON.stringify(st.counts.issues)}; events ${JSON.stringify(st.counts.events)}; decisions ${JSON.stringify(st.counts.decisions)}; projects ${JSON.stringify(st.counts.projects)}`)
     return ["ok", "incomplete_commit"].includes(st.health.status) ? 0 : 1
   } catch (e) {
     console.error(humanStoreError(e))
@@ -473,46 +473,46 @@ export function runStatus(ctx) {
 
 export function runDoctor(ctx) {
   const d = ctx.store.doctor()
-  console.log(`doctor @ ${d.root} — 健康状态: ${d.health.status}`)
+  console.log(`doctor @ ${d.root} — health: ${d.health.status}`)
   for (const c of d.checks) console.log(`  ${c.ok ? "✓" : "✗"} ${c.name}: ${c.detail}`)
   if (d.health.status === "ok") {
-    console.log("结论: 健康。")
+    console.log("verdict: healthy.")
     return 0
   }
-  console.log("结论: 不健康 — 授权输出保持关闭; 请按以上差异人工处理(备份还原; v1 无 rebuild)。")
+  console.log("verdict: unhealthy — authorization output stays disabled; resolve the differences above manually (restore from backup; v1 has no rebuild).")
   return 1
 }
 
 // ---------- usage / main ----------
 
 export function printUsage() {
-  console.log(`supervisor-memory — 人审 CLI(P3)与精确补丁输出(P4)
+  console.log(`supervisor-memory — human-review CLI (P3) and exact patch output (P4)
 
-用法: supervisor-memory [--root <store目录>] <子命令> [参数]
+usage: supervisor-memory [--root <store dir>] <subcommand> [args]
 
-子命令:
-  init                     显式初始化库(缺库不是全新安装; 已存在则拒绝覆盖)
-  digest                   待审列表 + 来源摘录 + 只读检查(D9) + 周报(D10)
-  digest --draft <issueId> 仅为该候选起草一次(外发仅该候选事件摘录; 需
-                           SUPERVISOR_MEMORY_DRAFT_API_KEY, 失败不重试)
-  approve <ISS-|RUL->      三段式 TTY 审批(D6); 输出手工应用补丁; 批准 ≠ 已落地
-  discard <ISS-|EVT->      丢弃候选 / 标记事件误报(终态)
-  merge <donor> <target>   合并候选(双方事件原始来源保留; 不连带授权)
-  disable <RUL->           停用规则 + 输出已知目标的移除补丁(库中停用 ≠ 残留已撤回)
-  status                   库状态人读呈现
-  doctor                   只读诊断(含未完成提交差异报告)
+subcommands:
+  init                     explicitly initialize the store (a missing store is not a fresh install; an existing one is never overwritten)
+  digest                   pending list + source excerpts + read-only check (D9) + weekly report (D10)
+  digest --draft <issueId> draft once for that candidate only (outbound: that candidate's event excerpts only; requires
+                           SUPERVISOR_MEMORY_DRAFT_API_KEY; failures are never retried)
+  approve <ISS-|RUL->      three-stage TTY approval (D6); prints patches for manual application; approval ≠ landed
+  discard <ISS-|EVT->      discard a candidate / mark an event a false positive (terminal)
+  merge <donor> <target>   merge candidates (both sides' original event sources preserved; carries no authorization)
+  disable <RUL->           disable a rule + print removal patches for known targets (disabled-in-store ≠ residue withdrawn)
+  status                   human-readable store status
+  doctor                   read-only diagnostics (including the incomplete-commit diff report)
 
-选项:
-  --root <dir>             库根目录(默认 ~/.local/share/opencode-supervisor/memory)
-  --week YYYY-Www          周报目标周
-  --spent-min <n>          周报自报: 处理耗时(分钟)
-  --dup-burden <text>      周报自报: 重复负担
-  --missed-exp <text>      周报自报: 漏记体验
-  --manual-increment <text> 周报自报: 手动整理增量
-  --store-draft            非交互时保存 --draft 草稿
-环境变量(digest --draft):
+options:
+  --root <dir>             store root (default ~/.local/share/opencode-supervisor/memory)
+  --week YYYY-Www          target week of the weekly report
+  --spent-min <n>          weekly self-report: time spent (minutes)
+  --dup-burden <text>      weekly self-report: duplicate burden
+  --missed-exp <text>      weekly self-report: missed-recording experience
+  --manual-increment <text> weekly self-report: manual-review increment
+  --store-draft            save the --draft draft when non-interactive
+environment variables (digest --draft):
   SUPERVISOR_MEMORY_DRAFT_API_KEY / SUPERVISOR_MEMORY_DRAFT_BASE_URL
-  (默认 http://10.126.126.10:3000/v1) / SUPERVISOR_MEMORY_DRAFT_MODEL(默认 glm-5.3)`)
+  (default http://10.126.126.10:3000/v1) / SUPERVISOR_MEMORY_DRAFT_MODEL (default glm-5.3)`)
 }
 
 /**
@@ -565,7 +565,7 @@ export async function main(argv, opts = {}) {
       case "doctor":
         return runDoctor(ctx)
       default:
-        console.error(`未知子命令: ${cmd}(见 supervisor-memory help)`)
+        console.error(`unknown subcommand: ${cmd} (see supervisor-memory help)`)
         return 2
     }
   } catch (e) {

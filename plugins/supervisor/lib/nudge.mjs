@@ -9,12 +9,12 @@
 // family A was retired 2026-10-23 after user labeling.)
 const RULE_HINTS = {
   "B.todo_stale":
-    "TODO 计划可能需要核对:按时间启发式,in_progress/pending 项已多轮未同步 todowrite(尚未证明计划确有错误)。建议核对 todowrite 或收敛计划。",
+    "TODO plan may need review: by the time-based heuristic, in_progress/pending items have gone multiple turns without any todowrite (not yet evidence the plan is actually wrong). Re-check the todowrite or converge the plan.",
 }
 
 export function formatNudge(candidate, maxChars, evidenceMaxChars = 200) {
   const b = candidate.binding
-  const hint = RULE_HINTS[candidate.ruleId] ?? "Supervisor L0 信号。"
+  const hint = RULE_HINTS[candidate.ruleId] ?? "Supervisor L0 signal."
   const lines = [
     "[supervisor-nudge]",
     `rule=${candidate.ruleId} v=${candidate.ruleVersion}`,
