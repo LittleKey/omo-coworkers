@@ -15,6 +15,17 @@
 // changed → human review, fail-closed). Every failure returns the structured
 // envelope (R33): {ok:false, code, message, nextTool, retry}.
 //
+// R33 phase 4: optional `mode` — "apply" (default, the behavior above) or
+// "remove". "remove" generates removal patches for the approved static rule's
+// managed segments already present in the registered targets, reusing the
+// shared generateRemove + formatPatch composition with the CLI disable
+// printer's exact framing (byte-identical to `supervisor-memory disable`
+// output). One patch per present segment; a target without a segment is
+// reported as skipped, not an error. system-ride rules never had static
+// targets, so they reject with RULE_NO_TARGETS in both modes. Removal is
+// equally unapplied text — the tool never writes files and never records a
+// disable decision (disabling stays a human CLI action).
+//
 // No confirmed/approved parameter exists (III.1: confirmation is a host
 // event, never a model-supplied argument).
 // Description lint (III.0, R33 form): one or two sentences — usage + the key
@@ -25,7 +36,7 @@
 import fs from "node:fs"
 import os from "node:os"
 
-import { formatRulePatch, PatchError } from "./cli/patch.mjs"
+import { formatRulePatch, formatRuleRemovePatch, PatchError } from "./cli/patch.mjs"
 import { candidateTargets, whyTarget } from "./cli/targets.mjs"
 import { describeScope } from "./cli/approve.mjs"
 import { gateSession, mapStoreError, memoryError, openStoreFor, sessionRejected, storeOpenError } from "./common.mjs"
@@ -33,7 +44,13 @@ import { gateSession, mapStoreError, memoryError, openStoreFor, sessionRejected,
 export const PREPARE_PUBLISH_TOOL_NAME = "memory_prepare_publish"
 
 export const TOOL_DESCRIPTION =
-  "Generate an application patch for a rule's approved static targets. Returns patch text without modifying files."
+  "Generate an application or removal patch for a rule's approved static targets. Returns patch text without modifying files."
+
+// The CLI disable printer's exact patch framing (runDisable) — the remove
+// mode reuses it verbatim so tool and CLI removal patches stay
+// byte-identical by construction.
+const REMOVE_WHY = "known publish target of the disabled rule"
+const REMOVE_SCOPE_PROMISE = "removes the entire managed segment (all versions)"
 
 const INPUT_SCHEMA = {
   type: "object",
@@ -42,6 +59,12 @@ const INPUT_SCHEMA = {
       type: "string",
       description:
         "Required. Rule ID (RUL-…); must be approved (active) with a matching approval decision record.",
+    },
+    mode: {
+      type: "string",
+      enum: ["apply", "remove"],
+      description:
+        'Optional. "apply" (default) generates the application patch; "remove" generates removal patches for the rule\'s managed segments already present in the targets.',
     },
   },
   required: ["ruleId"],
@@ -100,6 +123,10 @@ async function runPreparePublish(rawArgs, context, { cfg }) {
   const ruleId = typeof args.ruleId === "string" ? args.ruleId.trim() : ""
   if (ruleId.length === 0) {
     return memoryError("INVALID_INPUT", "ruleId must be a rule ID string (RUL-…)")
+  }
+  const mode = args.mode === undefined || args.mode === null ? "apply" : args.mode
+  if (mode !== "apply" && mode !== "remove") {
+    return memoryError("INVALID_INPUT", 'mode must be "apply" or "remove"')
   }
 
   let store
@@ -162,6 +189,7 @@ async function runPreparePublish(rawArgs, context, { cfg }) {
   }
   const previous = previousVersionOf(rule, reApprovals, mint)
   const patches = []
+  const skipped = []
   for (const t of targets) {
     const c = candidates.find((x) => x.path === t)
     if (!c) {
@@ -178,6 +206,26 @@ async function runPreparePublish(rawArgs, context, { cfg }) {
       content = fs.readFileSync(t, "utf8")
     } catch {
       return memoryError("TARGET_REJECTED", `target ${t} unreadable — target changed? send for human review (never inferred as user deletion)`, { retry: "requires_user_confirmation" })
+    }
+    if (mode === "remove") {
+      // Removal patches: the shared generateRemove + formatPatch composition
+      // with the CLI disable printer's exact framing — byte-identical to what
+      // `supervisor-memory disable` prints for the same target state. One
+      // patch per present segment (a rule may carry several versions); a
+      // target with no segment of this rule is skipped, not an error (the
+      // human decides whether that matches their expectation).
+      try {
+        const removals = formatRuleRemovePatch({ targetPath: t, why: REMOVE_WHY, scopePromise: REMOVE_SCOPE_PROMISE, fileContent: content, ruleId: rule.id })
+        if (removals.length === 0) {
+          skipped.push({ path: t, reason: "no managed segment for this rule in the target (never applied, or already removed)" })
+          continue
+        }
+        for (const r of removals) patches.push({ path: t, version: r.version, patch: r.text })
+      } catch (err) {
+        const detail = err instanceof PatchError ? err.message : String(err?.message ?? err)
+        return memoryError("TARGET_REJECTED", `removal patch generation failed for target ${t} — ${detail}`, { retry: "requires_user_confirmation" })
+      }
+      continue
     }
     try {
       patches.push({
@@ -204,8 +252,13 @@ async function runPreparePublish(rawArgs, context, { cfg }) {
     ok: true,
     ruleId: rule.id,
     version: rule.version,
+    mode,
     applied: false,
     patches,
-    note: "not applied: requires a human (or a human-authorized agent) to paste/write; presence confirmation is done by the read-only check of the human-review CLI (supervisor-memory digest)",
+    ...(skipped.length > 0 ? { skipped } : {}),
+    note:
+      mode === "remove"
+        ? "not applied: removal also requires a human (or a human-authorized agent) to delete the segment in the target file; presence confirmation is done by the read-only check of the human-review CLI (supervisor-memory digest)"
+        : "not applied: requires a human (or a human-authorized agent) to paste/write; presence confirmation is done by the read-only check of the human-review CLI (supervisor-memory digest)",
   }
 }

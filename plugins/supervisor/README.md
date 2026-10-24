@@ -245,8 +245,8 @@ the same object serialized into `content`.
 | --- | --- | --- |
 | `memory_record_correction` | `description` (required), `evidence` (1–3 real user message IDs; omittable — omitted or unresolvable ACP refs fall back to the current turn's triggering user message), `topic`, `issueId` (optional) | Appends a correction event to the pending queue (idempotent per source). Host-verified evidence only (same project, root session, `type: 'user'`); fail-closed. Never returns rule content. |
 | `memory_draft_rule` | `issueId` (required), `body` (required, ≤ 10 lines) | Writes a rule-text draft for one `draft` candidate into the shared `digest/drafts.json` view (same writer the CLI uses). Draft-state only — no decision, no authorization. |
-| `memory_prepare_publish` | `ruleId` (required) | For an approved rule, regenerates the apply-patch text with the exact composition the CLI approve printer uses (byte-identical) after re-verifying the D8 target conditions from current state. Zero file writes, no publish registration — the D9 presence check stays a human CLI `digest` read-only action. |
-| `memory_status` | — | Minimal read-only view: the caller's project's rules (id / one-line summary / status / version, plus user-global), pending candidate and event counts, and the human review entry point (`supervisor-memory digest`). No other project's data. |
+| `memory_prepare_publish` | `ruleId` (required), `mode` (optional: `"apply"` default \| `"remove"`) | For an approved rule, regenerates patch text with the exact composition the CLI printers use (byte-identical): `mode: "apply"` (default) produces the apply-patch for each registered target; `mode: "remove"` produces one removal patch per managed segment already present in a target (`supervisor-memory disable` byte-identical), reporting segment-less targets as `skipped` instead of failing. Both modes re-verify the D8 target conditions from current state and stay zero-file-write with no publish/decision registration — applying or removing remains a human action. system-ride rules (no static targets) reject with `MEMORY_RULE_NO_TARGETS` in both modes. |
+| `memory_status` | — (optional `id`: a `RUL-…` or `ISS-…` ID) | Read-only view of the caller's scope: the project's rules (id / one-line summary / status / version, plus user-global), pending candidate and event counts, and the human review entry point (`supervisor-memory digest`). Pending counts and the `pending.items` list (≤ 20, newest first: `id`, one-line excerpt, `firstSeenTs`, `draftStatus`) are filtered to the caller's project — other projects' candidates never appear; user-global rules are visible from every project. With `id`, returns a `details` object: a rule's full body / scope / channel / version / status / agents, or a candidate's evidence excerpts / sources / draft status. Out-of-scope or unknown ids return `MEMORY_NOT_FOUND` (existence is never distinguished from visibility); a non-`RUL-`/`ISS-` id returns `MEMORY_INVALID_INPUT`. |
 
 Tool failures use one structured envelope (Oracle R33): `{ ok: false, code:
 "MEMORY_<STABLE_CODE>", message, nextTool, retry }` — `message` is one
@@ -255,6 +255,10 @@ phase, and `retry` is one of `requires_user_confirmation` / `safe` /
 `never`. Stable codes include `MEMORY_STORE_MISSING`, `MEMORY_STORE_LOCKED`,
 `MEMORY_EVIDENCE_REJECTED`, `MEMORY_ISSUE_NOT_FOUND`, `MEMORY_RULE_NOT_FOUND`,
 `MEMORY_NOT_DRAFTABLE`, `MEMORY_INVALID_INPUT`, `MEMORY_SESSION_REJECTED`;
+`MEMORY_TARGET_REJECTED` (per-target D8 drift, including unconfirmed
+directories and removal-patch generation failures) and `MEMORY_NOT_FOUND`
+(per-ID `memory_status` lookups outside the caller's scope — visibility is
+never distinguished from existence);
 store failures pass through the store's own code family. Success receipts
 keep their existing shape (`ok: true, …`).
 
@@ -328,8 +332,10 @@ candidate). `test/tool.test.mjs` covers the `memory_record_correction` tool face
 (evidence validation matrix, root/child session gate, current-turn fallback,
 idempotency, mock mode, structured error envelopes). `test/step1a.test.mjs`
 covers the step-1a tools: draft/CLI view co-existence, no-decision guarantee,
-patch byte-identity with the CLI generation, D8 rejection matrix, project
-isolation of `memory_status`, the description lint, and the structured error
+patch byte-identity with the CLI generation (apply and remove modes), D8
+rejection matrix, project filtering of `memory_status` pending counts/items,
+per-ID `details` lookups (own-project / user-global / out-of-scope →
+`MEMORY_NOT_FOUND`), the description lint, and the structured error
 envelopes. `test/ride.test.mjs` covers the v6.2 system-ride
 face: every matching gate negative, budget whole-item skip, fixed order,
 marker idempotence, shape-guard isolation, delivery quadruple binding and

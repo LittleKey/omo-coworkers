@@ -17,7 +17,7 @@ import { DatabaseSync } from "node:sqlite"
 
 import { initStore, openStore } from "../lib/memory/store.mjs"
 import { saveDraft, readDrafts } from "../lib/memory/cli/views.mjs"
-import { formatRulePatch } from "../lib/memory/cli/patch.mjs"
+import { buildSegment, formatPatch, formatRulePatch, generateRemove } from "../lib/memory/cli/patch.mjs"
 import { candidateTargets, whyTarget } from "../lib/memory/cli/targets.mjs"
 import { describeScope } from "../lib/memory/cli/approve.mjs"
 import { buildDraftRuleTool } from "../lib/memory/draft.mjs"
@@ -299,6 +299,124 @@ test("memory_prepare_publish: 目录未确认 → 拒绝(目录确认是人的�
   expectReject(await executePrepareTool(cfg, { ruleId: rule.id }), "unconfirmed", { code: "MEMORY_TARGET_REJECTED", retry: "requires_user_confirmation" })
 })
 
+test("memory_prepare_publish mode=remove: 移除补丁与 CLI disable 打印字节一致, removed 内容=受管段; 无段→skipped", async (t) => {
+  const cfg = makeCfg(t)
+  const store = openStore(cfg.storeRoot, QUICK)
+  const { file } = makeTarget(t, store)
+  const { rule } = approveRule(store, { file, body: APPROVE_BODY })
+
+  // no segment applied yet → ok, nothing to remove, reported as skipped
+  const before = await executePrepareTool(cfg, { ruleId: rule.id, mode: "remove" })
+  assert.equal(before.ok, true)
+  assert.equal(before.mode, "remove")
+  assert.equal(before.applied, false)
+  assert.deepEqual(before.patches, [])
+  assert.equal(before.skipped.length, 1)
+  assert.match(before.skipped[0].reason, /no managed segment/)
+
+  // simulate the human having pasted the v1 segment into the target
+  fs.writeFileSync(file, `# agents\n${buildSegment(rule.id, 1, APPROVE_BODY)}\n`, { mode: 0o600 })
+  const res = await executePrepareTool(cfg, { ruleId: rule.id, mode: "remove" })
+  assert.equal(res.ok, true)
+  assert.equal(res.skipped, undefined, "nothing skipped once a segment exists")
+  assert.equal(res.patches.length, 1)
+  assert.equal(res.patches[0].path, file)
+  assert.match(res.note, /not applied/)
+
+  // byte-identical to the CLI disable printer for the same target state
+  const cli = generateRemove(fs.readFileSync(file, "utf8"), { ruleId: rule.id })
+  assert.equal(cli.length, 1)
+  const expected = formatPatch({
+    targetPath: file,
+    why: "known publish target of the disabled rule",
+    scopePromise: "removes the entire managed segment (all versions)",
+    tracked: cli[0].notes?.join("; ") || "see file",
+    patch: cli[0],
+  })
+  assert.equal(res.patches[0].patch, expected)
+
+  // the quoted removed content is exactly the managed segment (marker pair + body)
+  for (const l of buildSegment(rule.id, 1, APPROVE_BODY).split("\n")) {
+    assert.ok(res.patches[0].patch.includes(`  | ${l}`), `removal patch must quote the segment line: ${l}`)
+  }
+  assert.match(res.patches[0].patch, new RegExp(`supervisor-memory:rule:${rule.id}:v1`))
+})
+
+test("memory_prepare_publish mode=remove: 多版本段逐段出补丁(同 CLI disable), apply 显式缺省行为不变", async (t) => {
+  const cfg = makeCfg(t)
+  const store = openStore(cfg.storeRoot, QUICK)
+  const { file } = makeTarget(t, store)
+  const body2 = `${APPROVE_BODY}\nv2 追加行`
+  const { rule } = approveRule(store, { file, body: APPROVE_BODY })
+  store.recordDecision({
+    kind: "approve",
+    ruleId: rule.id,
+    object: {
+      body: body2,
+      scope: { kind: "project", projectId: PROJ_A },
+      targets: [file],
+      reviewDate: "2026-11-22",
+      channel: "patch-human-apply",
+      directoryBoundary: null,
+      agents: null,
+    },
+  })
+  assert.equal(store.getRule(rule.id).version, 2)
+
+  // both v1 and v2 segments present in the target (human pasted both)
+  fs.writeFileSync(
+    file,
+    `# agents\n${buildSegment(rule.id, 1, APPROVE_BODY)}\n${buildSegment(rule.id, 2, body2)}\n`,
+    { mode: 0o600 },
+  )
+  const res = await executePrepareTool(cfg, { ruleId: rule.id, mode: "remove" })
+  assert.equal(res.ok, true)
+  assert.equal(res.patches.length, 2, "one patch per present segment, like the CLI disable printer")
+  assert.deepEqual(res.patches.map((p) => p.version), [1, 2])
+
+  const cli = generateRemove(fs.readFileSync(file, "utf8"), { ruleId: rule.id })
+  assert.equal(cli.length, 2)
+  res.patches.forEach((p, i) => {
+    assert.equal(p.patch, formatPatch({
+      targetPath: file,
+      why: "known publish target of the disabled rule",
+      scopePromise: "removes the entire managed segment (all versions)",
+      tracked: cli[i].notes?.join("; ") || "see file",
+      patch: cli[i],
+    }))
+  })
+
+  // explicit mode:"apply" is the unchanged default behavior (byte-identity
+  // with the CLI approve printer, asserted in detail by the test above)
+  const applied = await executePrepareTool(cfg, { ruleId: rule.id, mode: "apply" })
+  assert.equal(applied.ok, true)
+  assert.equal(applied.mode, "apply")
+  assert.equal(applied.patches.length, 1)
+  assert.match(applied.patches[0].patch, new RegExp(`supervisor-memory:rule:${rule.id}:v2`))
+})
+
+test("memory_prepare_publish mode=remove: system-ride 规则 → RULE_NO_TARGETS; 非法 mode → INVALID_INPUT", async (t) => {
+  const cfg = makeCfg(t)
+  const store = openStore(cfg.storeRoot, QUICK)
+  const { file } = makeTarget(t, store)
+  const { rule } = store.recordDecision({
+    kind: "approve",
+    ruleId: null,
+    object: {
+      body: "ride 通道规则\n",
+      scope: { kind: "project", projectId: PROJ_A },
+      targets: [],
+      reviewDate: "2026-11-22",
+      channel: "system-ride",
+      directoryBoundary: null,
+      agents: null,
+    },
+  })
+  expectReject(await executePrepareTool(cfg, { ruleId: rule.id, mode: "remove" }), "no registered targets", { code: "MEMORY_RULE_NO_TARGETS" })
+  expectReject(await executePrepareTool(cfg, { ruleId: rule.id, mode: "rewind" }), 'mode must be "apply" or "remove"', { code: "MEMORY_INVALID_INPUT" })
+  assert.equal(fs.readFileSync(file, "utf8"), "# agents\n", "rejections never touched the target file")
+})
+
 // ---------- memory_status ----------
 
 test("memory_status: 只含本项目(含全局), 不含他项目/目录范围规则与审批细节", async (t) => {
@@ -344,8 +462,122 @@ test("memory_status: 空库 → 空列表与零计数, 仍只读", async (t) => 
   const res = await executeStatusTool(cfg)
   assert.equal(res.ok, true)
   assert.deepEqual(res.rules, [])
-  assert.deepEqual(res.pending, { candidates: 0, events: 0 })
+  assert.deepEqual(res.pending, { candidates: 0, events: 0, items: [] })
   assert.equal(openStore(cfg.storeRoot, QUICK).listDecisions().length, 0)
+})
+
+// ---------- memory_status R33 phase 4: project-filtered pending + per-ID details ----------
+
+test("memory_status: pending 计数与列表按项目过滤 — A 看不到 B 的候选/事件, user-global 规则两项目均可见", async (t) => {
+  const cfg = makeCfg(t)
+  const store = openStore(cfg.storeRoot, QUICK)
+  const { file } = makeTarget(t, store)
+  const g = approveRule(store, { file, body: "全局规则\n", scope: { kind: "user-global" } })
+  const aIss = seedIssue(store, { messageId: "msg_a1" })
+  const bIss = seedIssue(store, { projectId: PROJ_B, sessionId: "ses_root_b", messageId: "msg_b1" })
+
+  const a = await executeStatusTool(cfg)
+  assert.equal(a.projectId, PROJ_A)
+  assert.equal(a.pending.candidates, 1, "only project A's draft candidates counted")
+  assert.equal(a.pending.events, 1, "only project A's pending events counted")
+  assert.deepEqual(a.pending.items.map((i) => i.id), [aIss])
+  assert.ok(!JSON.stringify(a.pending).includes(bIss), "project B's candidate must not leak into project A's pending view")
+  assert.ok(a.rules.some((r) => r.id === g.rule.id), "user-global rule visible from project A")
+
+  const b = await executeStatusTool(cfg, {}, { sessionID: "ses_root_b" })
+  assert.equal(b.projectId, PROJ_B)
+  assert.equal(b.pending.candidates, 1)
+  assert.equal(b.pending.events, 1)
+  assert.deepEqual(b.pending.items.map((i) => i.id), [bIss])
+  assert.ok(!JSON.stringify(b.pending).includes(aIss), "project A's candidate must not leak into project B's pending view")
+  assert.ok(b.rules.some((r) => r.id === g.rule.id), "user-global rule visible from project B")
+})
+
+test("memory_status: pending.items 形状/草稿状态/单行摘录; >20 条时限 20 而计数不截断", async (t) => {
+  const cfg = makeCfg(t)
+  const store = openStore(cfg.storeRoot, QUICK)
+  for (let n = 0; n < 25; n++) seedIssue(store, { messageId: `msg_${n}`, title: `候选 ${n}\n第二行` })
+
+  const res = await executeStatusTool(cfg)
+  assert.equal(res.pending.candidates, 25, "counts stay uncapped project totals")
+  assert.equal(res.pending.items.length, 20, "item list is capped at 20")
+  for (const item of res.pending.items) {
+    assert.deepEqual(Object.keys(item).sort(), ["draftStatus", "excerpt", "firstSeenTs", "id"])
+    assert.equal(typeof item.firstSeenTs, "number")
+    assert.equal(item.draftStatus, "none")
+    assert.ok(!item.excerpt.includes("\n"), "excerpt is one line")
+  }
+
+  // a stored draft flips the item's draftStatus (shared drafts.json view)
+  saveDraft(cfg.storeRoot, res.pending.items[0].id, "草稿正文", Date.now())
+  const after = await executeStatusTool(cfg)
+  assert.equal(after.pending.items.find((i) => i.id === res.pending.items[0].id).draftStatus, "drafted")
+})
+
+test("memory_status: id=详情 — 本项目规则全文/候选证据; 他项目/目录范围/未知 → NOT_FOUND 不暴露存在性", async (t) => {
+  const cfg = makeCfg(t)
+  const store = openStore(cfg.storeRoot, QUICK)
+  const { file } = makeTarget(t, store)
+  const body = "项目规则全文\n第二行\n"
+  const { rule } = approveRule(store, { file, body })
+  const g = approveRule(store, { file, body: "全局规则\n", scope: { kind: "user-global" } })
+  const b = approveRule(store, { file, body: "B 项目秘密规则\n", scope: { kind: "project", projectId: PROJ_B } })
+  const d = approveRule(store, { file, body: "目录范围规则\n", scope: { kind: "directory", directory: path.dirname(file) } })
+  const iss = seedIssue(store, { messageId: "msg_det", title: "详情候选" })
+
+  // own project rule: full body + scope/channel/version/status/agents
+  const rd = await executeStatusTool(cfg, { id: rule.id })
+  assert.equal(rd.ok, true)
+  assert.deepEqual(rd.details, {
+    kind: "rule",
+    id: rule.id,
+    status: "active",
+    version: 1,
+    body,
+    scope: { kind: "project", projectId: PROJ_A },
+    channel: "patch-human-apply",
+    agents: null,
+  })
+
+  // user-global rule visible from any project
+  const gd = await executeStatusTool(cfg, { id: g.rule.id })
+  assert.equal(gd.details.kind, "rule")
+  assert.deepEqual(gd.details.scope, { kind: "user-global" })
+
+  // candidate: evidence excerpts + sources + draft status
+  const isd = await executeStatusTool(cfg, { id: iss })
+  assert.deepEqual(Object.keys(isd.details).sort(), ["draftStatus", "evidence", "id", "kind", "projectId", "recurrence", "status", "title"])
+  assert.equal(isd.details.kind, "issue")
+  assert.equal(isd.details.status, "draft")
+  assert.equal(isd.details.draftStatus, "none")
+  assert.equal(isd.details.projectId, PROJ_A)
+  assert.equal(isd.details.evidence.length, 1)
+  assert.equal(isd.details.evidence[0].excerpt, "seed correction")
+  assert.equal(isd.details.evidence[0].source.projectId, PROJ_A)
+
+  // out-of-scope / directory-scope / unknown → same NOT_FOUND envelope,
+  // existence (or content) never leaks
+  for (const foreign of [b.rule.id, d.rule.id, "RUL-nope", "ISS-nope"]) {
+    expectReject(await executeStatusTool(cfg, { id: foreign }), "not visible in this scope", { code: "MEMORY_NOT_FOUND", retry: "never" })
+  }
+  const raw = await executeStatusTool(cfg, { id: b.rule.id })
+  assert.ok(!JSON.stringify(raw).includes("B 项目秘密规则"), "NOT_FOUND must not carry the foreign rule's content")
+  expectReject(await executeStatusTool(cfg, { id: "garbage" }), "RUL-", { code: "MEMORY_INVALID_INPUT" })
+})
+
+test("memory_status: id=详情 草稿状态反映 drafts.json; 默认视图(无 id)不携带 details 字段", async (t) => {
+  const cfg = makeCfg(t)
+  const store = openStore(cfg.storeRoot, QUICK)
+  makeTarget(t, store)
+  const iss = seedIssue(store, { messageId: "msg_draft_det" })
+  saveDraft(cfg.storeRoot, iss, "已起草正文", Date.now())
+
+  const res = await executeStatusTool(cfg, { id: iss })
+  assert.equal(res.details.draftStatus, "drafted")
+  assert.equal(res.details.recurrence, 1)
+
+  const plain = await executeStatusTool(cfg)
+  assert.equal(plain.details, undefined, "no id argument → no details field")
 })
 
 // ---------- tool face shape (III.0 lint + registration) ----------

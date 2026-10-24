@@ -256,3 +256,30 @@ export function formatRulePatch({
     patch: generatePatch(fileContent, { ruleId, version, body, previous }),
   })
 }
+
+/**
+ * Shared per-target removal-patch composition (generateRemove + formatPatch) —
+ * the removal counterpart of formatRulePatch (R33 phase 4). The CLI disable
+ * printer (runDisable in cli.mjs) uses generateRemove + formatPatch directly
+ * with the same arguments, so tool and CLI removal-patch text are
+ * byte-identical by construction. Pure: takes and returns strings, zero
+ * filesystem access. Returns [] when the target carries no segment of this
+ * rule (never applied, or already removed); throws PatchError from
+ * generateRemove on marker anomalies (fail-closed). When trackedNote is
+ * omitted it falls back to the CLI disable printer's own per-patch default
+ * (the patch notes, or "see file").
+ */
+export function formatRuleRemovePatch({ targetPath, why, scopePromise, trackedNote, fileContent, ruleId }) {
+  const removals = generateRemove(fileContent, { ruleId })
+  if (!removals) return []
+  return removals.map((p) => ({
+    version: p.version,
+    text: formatPatch({
+      targetPath,
+      why,
+      scopePromise,
+      tracked: trackedNote !== undefined ? trackedNote : (p.notes?.join("; ") || "see file"),
+      patch: p,
+    }),
+  }))
+}
