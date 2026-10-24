@@ -259,6 +259,42 @@ With `memory.mock: true`, tool runs validate the full chain but write nothing
 to the store; receipts carry `mock: true` and are collected per-session under
 an isolated mock directory.
 
+### System-ride delivery (`memory.delivery`, v6.2)
+
+Rules can be approved on the `system-ride` channel instead of
+`static-agents-md`. A system-ride rule never generates static targets or
+AGENTS.md patches — the plugin never writes files for it. Delivery is a
+separate, explicit human authorization: `supervisor-memory delivery-enable
+<RUL-…>` records a decision binding the quadruple (ruleId, version, bodyHash,
+channel); `delivery-disable` stops appending. Re-approving a rule to a new
+version auto-resets its delivery to disabled.
+
+With `memory: { delivery: "inject" }` the plugin, inside the existing context
+hook, appends each matching rule as one new element of the request's `system`
+array (`{type:'text', text}`) headed by
+`[supervisor-memory:rule:<id>:v<version>]` — never rewriting existing
+elements. Matching is deterministic and fail-closed: rule active +
+delivery-enabled decision + `system-ride` channel; root sessions only; the
+session's project must equal a project-scoped rule's scope (user-global is
+unrestricted); the current request's agent name must literally equal the
+rule's recorded agent (empty list = unrestricted; unknown/missing agent → no
+delivery). The host rebuilds `system` per request, so the element is
+re-appended on every request; a marker check keeps it idempotent within a
+request. Total budget is 1200 characters per request including headers, in
+fixed approval-time order; a whole item that does not fit is skipped and
+logged (`skipped:memory-cap-1200`) — never truncated, never rotated. If the
+host's `system` shape changes (not `Array<{type:'text',text:string}>`), only
+memory injection is disabled (latched, logged as `memory_shape_guard`) and
+the rest of the plugin keeps working. `memory.delivery: "shadow"` (default
+`off`) runs the full matching gate but only logs `would-ride` outcomes and
+never touches `system`. `supervisor-memory digest` prints a sentinel line per
+delivery-enabled rule: recent eligible sessions seen in the log window, ride
+count, and the agent-name distribution.
+
+Withdrawal semantics: `delivery-disable` only stops future appending — rule
+text already present in history answers or compressed summaries does not
+disappear.
+
 ### Tests
 
 ```sh
@@ -282,7 +318,12 @@ candidate). `test/tool.test.mjs` covers the `report_correction` tool face
 idempotency, mock mode). `test/step1a.test.mjs` covers the step-1a tools:
 draft/CLI view co-existence, no-decision guarantee, patch byte-identity with
 the CLI generation, D8 rejection matrix, project isolation of `memory_status`,
-and the description lint.
+and the description lint. `test/ride.test.mjs` covers the v6.2 system-ride
+face: every matching gate negative, budget whole-item skip, fixed order,
+marker idempotence, shape-guard isolation, delivery quadruple binding and
+re-approval reset (against a real store), shadow log-only behavior, the CLI
+delivery-enable/disable TTY flows, the digest sentinel, and an
+enable → ride → disable → stop → re-enable cycle.
 
 ## Tests
 

@@ -37,6 +37,8 @@ import {
   isAdvisorSessionName,
   findSyntheticMarker,
   findInternalMetadataKey,
+  findSupervisorMetadata,
+  findSupervisorTextPrefix,
   findTaskCompletedSignal,
 } from "./filter.mjs"
 import { evaluateAllRules } from "./rules.mjs"
@@ -126,6 +128,20 @@ export function createSupervisorCore(options) {
         if (rec.blacklisted) return
         if (info.role === "user") {
           if (rec.knownUserIds.has(info.id)) return
+          // R32: metadata-first recognition of our own synthetics (nudge
+          // messages carry metadata.supervisor); the [supervisor-nudge] text
+          // prefix stays as fallback (external synthetics may lack metadata).
+          const sup = findSupervisorMetadata(info)
+          if (sup) {
+            rec.ignoredMessageIds.add(info.id)
+            discard(rec, "metadata_supervisor", { messageId: info.id, kind: sup.kind })
+            return
+          }
+          if (findSupervisorTextPrefix(info) !== null) {
+            rec.ignoredMessageIds.add(info.id)
+            discard(rec, "text_supervisor", { messageId: info.id })
+            return
+          }
           const metaKey = findInternalMetadataKey(info)
           if (metaKey) {
             rec.ignoredMessageIds.add(info.id)

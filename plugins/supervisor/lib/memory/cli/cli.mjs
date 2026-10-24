@@ -24,6 +24,8 @@ import { generateRemove, formatPatch } from "./patch.mjs"
 import { readView, writeView, readDrafts, saveDraft, recordDraftFailure } from "./views.mjs"
 import { draftEnv, draftOnce } from "./draft.mjs"
 import { runApprove } from "./approve.mjs"
+import { runDeliveryEnable, runDeliveryDisable, printRideSentinel } from "./delivery.mjs"
+import { defaultLogPath } from "../../config.mjs"
 
 // ---------- IO ----------
 
@@ -285,6 +287,7 @@ export async function runDigest(ctx, flags) {
     printPending(store, store.listPending())
     const checks = readonlyCheck(store.listRules(), store.listDecisions())
     printChecks(checks)
+    printRideSentinel(store, { logPath: defaultLogPath() })
     const w = weeklySection(store, store.root, flags, Date.now(), { write: st.health.status === "ok" })
     printWeekly(w)
     // views only on a healthy store (rebuildable, non-authoritative)
@@ -499,6 +502,9 @@ subcommands:
   discard <ISS-|EVT->      discard a candidate / mark an event a false positive (terminal)
   merge <donor> <target>   merge candidates (both sides' original event sources preserved; carries no authorization)
   disable <RUL->           disable a rule + print removal patches for known targets (disabled-in-store ≠ residue withdrawn)
+  delivery-enable <RUL->   authorize system-ride delivery for one rule version (binds ruleId+version+bodyHash+channel;
+                           injected into the system prompt of every model request of matching sessions, persistent within session)
+  delivery-disable <RUL->  stop appending the rule to the system prompt (history/compressed text is not retroactively removed)
   status                   human-readable store status
   doctor                   read-only diagnostics (including the incomplete-commit diff report)
 
@@ -560,6 +566,10 @@ export async function main(argv, opts = {}) {
         return runMerge(ctx, pos[1], pos[2])
       case "disable":
         return runDisable(ctx, pos[1])
+      case "delivery-enable":
+        return await runDeliveryEnable(ctx, pos[1])
+      case "delivery-disable":
+        return await runDeliveryDisable(ctx, pos[1])
       case "status":
         return runStatus(ctx)
       case "doctor":

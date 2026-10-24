@@ -38,7 +38,14 @@ export function formatNudge(candidate, maxChars, evidenceMaxChars = 200) {
 // extra fields. Appended AFTER existing messages; never rewrites them.
 export function buildInjectedMessage(text, _sessionId) {
   return {
-    info: { id: `msg_sn_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, role: "user" },
+    info: {
+      id: `msg_sn_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      role: "user",
+      // R32: machine-readable self-identification — filter.mjs prefers this
+      // metadata over the [supervisor-nudge] text prefix (which stays as a
+      // fallback for legacy/external synthetics that lack metadata).
+      metadata: { supervisor: { kind: "nudge" } },
+    },
     parts: [{ type: "text", text }],
   }
 }

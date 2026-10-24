@@ -80,10 +80,11 @@ const BODY = "在 JavaScript 中始终使用 const 声明变量\n不要使用 va
 
 /** Approve answer sequence: body → scope → agents → reviewDate → targets →
  *  [dirConfirm] → [trackedConfirm] → stage3. */
-function approveAnswers({ body = BODY, scope = "1", dirConfirm = "y", trackedConfirm = null, stage3 = "y", targets = "1", dirInput = null } = {}) {
+function approveAnswers({ body = BODY, scope = "1", dirConfirm = "y", trackedConfirm = null, stage3 = "y", targets = "1", dirInput = null, channel = "1" } = {}) {
   const a = [body]
   a.push(scope)
   if (dirInput !== null) a.push(dirInput)
+  a.push(channel) // delivery channel choose (1 = static-agents-md, 2 = system-ride)
   a.push("") // agents (none)
   a.push("") // reviewDate (default)
   a.push(targets)
@@ -754,7 +755,7 @@ test("approve: adopts stored draft body when confirmed", async (t) => {
   const fx = makeFixture(t)
   const iss = seedIssue(fx.storeRoot)
   saveDraft(fx.storeRoot, iss.id, BODY, Date.now())
-  const io = fakeIO(["y", "1", "", "", "1", "y", "y"]) // adopt draft → scope → agents → date → targets → dirConfirm → stage3
+  const io = fakeIO(["y", "1", "1", "", "", "1", "y", "y"]) // adopt draft → scope → channel → agents → date → targets → dirConfirm → stage3
   const r = await runCli(["approve", iss.id], fx, { io })
   assert.equal(r.code, 0)
   assert.equal(openStore(fx.storeRoot).listRules()[0].body, BODY)
@@ -919,7 +920,7 @@ test("T5: CLAUDE.md-only project → no compliant target, CLAUDE.md untouched", 
   openStore(fx.storeRoot).upsertProject({ projectId: "proj-alpha", directory: fx.proj, confirmDirectory: true })
   const iss = seedIssue(fx.storeRoot)
   const before = snapshot(fx.base)
-  const io = fakeIO([BODY, "1", "", ""]) // body, scope, agents, reviewDate — no targets offered
+  const io = fakeIO([BODY, "1", "1", "", ""]) // body, scope, channel, agents, reviewDate — no targets offered
   const r = await runCli(["approve", iss.id], fx, { io })
   assert.equal(r.code, 1)
   assert.match(r.text, /no eligible target/)
@@ -964,7 +965,7 @@ test("T5: externally changed target → approve refused, sent for human review",
   fs.writeFileSync(fx.target, `${buildSegment(rule.id, 1, "这段内容已被外部改动")}\n`)
   const decisionsBefore = openStore(fx.storeRoot).listDecisions().length
   // re-approve the rule: adopt current body → stage 1/3 confirmations
-  const io = fakeIO(["y", "1", "", "", "1", "y", "y"])
+  const io = fakeIO(["y", "1", "1", "", "", "1", "y", "y"])
   const r = await runCli(["approve", rule.id], fx, { io })
   assert.equal(r.code, 1)
   assert.match(r.text, /patch generation failed/)

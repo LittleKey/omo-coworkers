@@ -20,7 +20,8 @@
 
 import { createSupervisorCore } from "./lib/runtime.mjs"
 import { createV2ContextHandler } from "./lib/v2-context.mjs"
-import { registerMemoryTool } from "./lib/memory/tool.mjs"
+import { registerMemoryTool, resolveMemoryOptions } from "./lib/memory/tool.mjs"
+import { createRideInjector } from "./lib/memory/ride.mjs"
 
 const supervisor = {
   id: "supervisor",
@@ -59,10 +60,29 @@ const supervisor = {
     const nativeContext = createV2ContextHandler(core, async (sessionID) => {
       return await ctx.session.get({ sessionID })
     })
+    // v6.2 system-ride injector (§III.8): same mount point as the context
+    // hook, always created (mode "off" makes onContext a no-op). Runs AFTER
+    // the L0 handler and is fully failure-isolated: any ride error is logged
+    // and swallowed — the L0/inject paths above are never affected (D1).
+    let ride = createRideInjector({
+      cfg: resolveMemoryOptions(ctx?.options),
+      log: (entry) => core.log.write(entry),
+    })
+
     await ctx.session.hook("context", async (event) => {
       // Retain the v1-shaped path for compatibility callers.
       if (event?.messages?.some(message => message.info)) return core.v2.onContext(event)
-      return nativeContext(event)
+      const res = await nativeContext(event)
+      try {
+        await ride.onContext(event)
+      } catch (err) {
+        try {
+          core.log.write({ kind: "internal_error", where: "memory.ride", error: String(err?.message ?? err) })
+        } catch {
+          /* never propagate */
+        }
+      }
+      return res
     })
 
     // Optional memory tool face (m1 P2): registered only when explicitly

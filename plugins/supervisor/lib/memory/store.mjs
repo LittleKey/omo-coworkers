@@ -95,6 +95,13 @@ export const TXN_CHECKLISTS = {
   recordDecisionReject: ["marker:pending", "decisions:append", "marker:commit"],
   recordDecisionDisable: ["marker:pending", "decisions:append", "rules:replace", "marker:commit"],
   recordDecisionEnable: ["marker:pending", "decisions:append", "rules:replace", "marker:commit"],
+  // v6.2 system-ride delivery authorization (§III.8): history-only records —
+  // the delivery state is DERIVED from the decision log (latest decision per
+  // rule wins; a delivery-enable binds ruleId+version+bodyHash+channel, so a
+  // re-approve to a new version auto-invalidates it). rules.json is never
+  // touched by delivery decisions.
+  recordDecisionDeliveryEnable: ["marker:pending", "decisions:append", "marker:commit"],
+  recordDecisionDeliveryDisable: ["marker:pending", "decisions:append", "marker:commit"],
   recordPublishResult: ["marker:pending", "rules:replace", "marker:commit"],
   upsertProject: ["marker:pending", "projects:replace", "marker:commit"],
 }
@@ -1248,13 +1255,25 @@ export class Store {
   }
 
   /**
-   * Record one rule decision (D6): kind approve | reject | disable | enable.
+   * Record one rule decision (D6): kind approve | reject | disable | enable |
+   * delivery-enable | delivery-disable (the delivery kinds are the v6.2
+   * system-ride authorization, §III.8).
    * - approve: object required (full approval object). Creates rule v1 or
    *   bumps the version of an existing rule; status active.
    * - reject: history-only record; rules.json untouched.
    * - disable: human-only (I.6); active → disabled, keeps body/targets.
    * - enable: human-only restart; disabled → active as a NEW version with a
    *   fresh approval object (never a silent revival of the old grant).
+   * - delivery-enable: binds (ruleId, version, bodyHash, channel) for
+   *   system-ride delivery. Requires the rule to exist, be active, and be on
+   *   the system-ride channel, and the object to match the CURRENT rule
+   *   version and body hash exactly — a re-approved (new-version) rule
+   *   auto-invalidates the old delivery-enable. History-only (rules.json
+   *   untouched); the ride-time matcher re-derives and re-verifies the
+   *   quadruple from the decision log on every model request.
+   * - delivery-disable: history-only stop record; matching stops appending
+   *   on the next evaluation (historical replies and compressed summaries
+   *   are not retroactively edited).
    * The decision record stores the canonical approval-object hash and its own
    * decisionHash; the rule's approvalRef points at the decision record hash
    * (display-confirm binding). Decisions are appended before rules.json is
@@ -1264,14 +1283,27 @@ export class Store {
   recordDecision(input) {
     const i = reqObject(input, "input")
     const kind = reqString(i.kind, "input.kind", 16)
-    if (kind !== "approve" && kind !== "reject" && kind !== "disable" && kind !== "enable") {
-      throw new StoreError("STORE_INPUT", 'input.kind must be "approve" | "reject" | "disable" | "enable"')
+    if (
+      kind !== "approve" && kind !== "reject" && kind !== "disable" && kind !== "enable" &&
+      kind !== "delivery-enable" && kind !== "delivery-disable"
+    ) {
+      throw new StoreError(
+        "STORE_INPUT",
+        'input.kind must be "approve" | "reject" | "disable" | "enable" | "delivery-enable" | "delivery-disable"',
+      )
     }
+    const isDelivery = kind === "delivery-enable" || kind === "delivery-disable"
     const ruleId = i.ruleId === undefined || i.ruleId === null ? null : reqString(i.ruleId, "input.ruleId", 128)
     const approval = kind === "approve" || kind === "enable" ? normalizeApprovalObject(i.object) : null
     const note = kind === "approve" || kind === "enable" ? null : i.object === undefined ? null : reqObject(i.object, "input.object")
     const checklistKey =
-      kind === "approve" ? "recordDecisionApprove" : kind === "reject" ? "recordDecisionReject" : kind === "disable" ? "recordDecisionDisable" : "recordDecisionEnable"
+      kind === "approve" ? "recordDecisionApprove"
+      : kind === "reject" ? "recordDecisionReject"
+      : kind === "disable" ? "recordDecisionDisable"
+      : kind === "enable" ? "recordDecisionEnable"
+      : isDelivery ? (kind === "delivery-enable" ? "recordDecisionDeliveryEnable" : "recordDecisionDeliveryDisable")
+      : null
+    if (!checklistKey) throw new StoreError("STORE_INPUT", `unhandled decision kind ${kind}`)
     return this.#write(checklistKey, (data, ctx) => {
       const rulesDoc = data.rulesDoc
       if (!rulesDoc || !isObj(rulesDoc.rules)) {
@@ -1279,7 +1311,13 @@ export class Store {
       }
       const ts = ctx.ts
       const decisionId = newId("DEC")
-      const objectHash = approval ? sha256Hex(canonicalJson(approval)) : null
+      // Approval objects hash the normalized approval; delivery bindings hash
+      // the quadruple object. Pre-existing kinds (reject/disable/enable with
+      // a note) keep objectHash null — record shape is unchanged for them.
+      const objectHash =
+        approval ? sha256Hex(canonicalJson(approval))
+        : isDelivery && note ? sha256Hex(canonicalJson(note))
+        : null
       const decisionBase = {
         type: "decision",
         v: SCHEMA_VERSION,
@@ -1346,6 +1384,41 @@ export class Store {
           updatedAtTs: ts,
         }
         rulesDoc.rules[ruleId] = rule
+      } else if (kind === "delivery-enable") {
+        // §III.8: bind (ruleId, version, bodyHash, channel) against the
+        // CURRENT rule state; any mismatch is refused (fail-closed).
+        if (ruleId === null) throw new StoreError("STORE_INPUT", "delivery-enable requires input.ruleId")
+        const target = rulesDoc.rules[ruleId]
+        if (!target) throw new StoreError("STORE_STATE", `delivery-enable references unknown rule ${ruleId}`)
+        if (target.status !== "active") {
+          throw new StoreError("STORE_STATE", `rule ${ruleId} is ${target.status}; only active rules can be delivery-enabled`)
+        }
+        if (target.channel !== "system-ride") {
+          throw new StoreError("STORE_STATE", `rule ${ruleId} channel is ${target.channel ?? "unset"}; system-ride delivery applies only to rules approved on the system-ride channel`)
+        }
+        if (!note || typeof note !== "object" || Array.isArray(note)) {
+          throw new StoreError("STORE_INPUT", "delivery-enable requires input.object {channel, version, bodyHash}")
+        }
+        if (note.channel !== "system-ride") {
+          throw new StoreError("STORE_INPUT", 'delivery-enable object.channel must be "system-ride"')
+        }
+        if (note.version !== target.version) {
+          throw new StoreError(
+            "STORE_STATE",
+            `delivery-enable binds version ${note.version} but rule ${ruleId} is v${target.version} — a re-approved rule resets delivery; record against the current version`,
+          )
+        }
+        if (note.bodyHash !== sha256Hex(target.body)) {
+          throw new StoreError("STORE_STATE", `delivery-enable bodyHash mismatch for rule ${ruleId} v${target.version} — the rule body changed; re-approve and re-bind`)
+        }
+      } else if (kind === "delivery-disable") {
+        // Stop record: matching stops appending on the next evaluation.
+        // The rule must exist; its current status is irrelevant (a disabled
+        // rule already delivers nothing — the record keeps the log complete).
+        if (ruleId === null) throw new StoreError("STORE_INPUT", "delivery-disable requires input.ruleId")
+        if (!rulesDoc.rules[ruleId]) {
+          throw new StoreError("STORE_STATE", `delivery-disable references unknown rule ${ruleId}`)
+        }
       } else {
         // reject: history-only; a referenced ruleId must exist when given.
         if (ruleId !== null && !rulesDoc.rules[ruleId]) {

@@ -167,65 +167,92 @@ export async function runApprove(ctx, id) {
     scope = { kind: "directory", directory: path.resolve(dir) }
   }
 
-  // ---- agent restriction: cannot be honored through AGENTS.md (load scope
-  // does not distinguish agents) → keep unpublished with a reason, no record. ----
+  // ---- delivery channel (v6.2 §III.8): one rule one channel ----
+  io.print("Choose a delivery channel:")
+  const channelIdx = await io.choose("channel", [
+    "static-agents-md — publish as AGENTS.md patches (applied manually; loads by directory, cannot distinguish agents)",
+    "system-ride — the plugin injects the body into the system prompt of every model request of matching sessions (persistent within session); no files are written",
+  ])
+  const channel = channelIdx === 1 ? "system-ride" : "patch-human-apply"
+  if (rule && rule.channel && rule.channel !== channel) {
+    io.print(`rejected: rule ${rule.id} was approved on channel ${rule.channel} — one rule one channel; re-approval cannot switch channels.`)
+    return { code: 1 }
+  }
+  if (channel === "system-ride" && scope.kind === "directory") {
+    io.print("rejected: system-ride matches sessions by project (or user-global); a directory scope cannot be matched — approve with project or user-global scope instead.")
+    return { code: 1 }
+  }
+
+  // ---- agent restriction ----
+  // static-agents-md: cannot be honored through AGENTS.md (load scope does
+  // not distinguish agents) → keep unpublished with a reason, no record.
+  // system-ride: agent binding is supported (the ride matcher compares the
+  // current-request agent name with rule.agents[0] literally).
   const agentsRaw = await io.input("agents to restrict to (comma-separated, empty = no restriction)", "")
   const agents = agentsRaw.split(/[,，\s]+/).filter(Boolean)
-  if (agents.length > 0) {
+  if (channel === "patch-human-apply" && agents.length > 0) {
     io.print("left unpublished: agent restrictions cannot be honored through the AGENTS.md load scope (that file loads by directory and does not distinguish agents); the v1 CLI does not record such approvals.")
-    io.print(`reason: requested agent scope = ${agents.join(", ")}; the only scopes that can honor it are user-global / project / directory.`)
+    io.print(`reason: requested agent scope = ${agents.join(", ")}; the only scopes that can honor it are user-global / project / directory. To bind agents, approve on the system-ride channel instead.`)
     return { code: 1 }
   }
 
   const defaultReview = new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString().slice(0, 10)
   const reviewDate = await inputDate(io, "review date (YYYY-MM-DD, empty = 30 days from now)", defaultReview)
-  const channel = "patch-human-apply"
 
-  // ---- stage 1: targets (existing files only; per-target confirmation) ----
-  const projects = store.listProjects()
-  const candidates = candidateTargets({ scope, projects, cwd, home })
-  io.print("Candidate targets (new files are never created; a missing file = not selectable):")
-  candidates.forEach((c, i) => {
-    const flag = c.exists ? `${i + 1}.` : "×"
-    const conf = c.confirmedDir === false ? " [directory unconfirmed]" : c.confirmedDir === true ? " [directory confirmed]" : ""
-    io.print(`  ${flag} ${c.path} — ${c.exists ? "exists" : "missing (new files are never created)"}, ${c.note}${conf}`)
-  })
-  const selectableCount = candidates.filter((c) => c.exists).length
-  if (selectableCount === 0) {
-    io.print("no eligible target: no existing AGENTS.md can carry this rule (a CLAUDE.md-only or file-less target is never fallen back to or created). Left unpublished, approval not recorded.")
-    return { code: 1 }
-  }
-  const selRaw = await io.input("select targets (numbers, comma-separated for multiple; empty = abort)", "")
-  const sel = parseSelections(selRaw, candidates.length)
-  if (!sel || sel.length === 0) {
-    io.print("no target selected — approval abandoned, no decision recorded.")
-    return { code: 1 }
-  }
+  // ---- stage 1: targets — static channel only. system-ride produces no
+  // static targets and no patches, ever (§III.8: the plugin never writes
+  // files for this channel). ----
   const targets = []
-  for (const ix of sel) {
-    const c = candidates[ix]
-    if (!c || !c.exists) {
-      io.print(`rejected: the selected target does not exist — new files are never created.`)
+  const candidates = []
+  if (channel === "patch-human-apply") {
+    const projects = store.listProjects()
+    candidates.push(...candidateTargets({ scope, projects, cwd, home }))
+    io.print("Candidate targets (new files are never created; a missing file = not selectable):")
+    candidates.forEach((c, i) => {
+      const flag = c.exists ? `${i + 1}.` : "×"
+      const conf = c.confirmedDir === false ? " [directory unconfirmed]" : c.confirmedDir === true ? " [directory confirmed]" : ""
+      io.print(`  ${flag} ${c.path} — ${c.exists ? "exists" : "missing (new files are never created)"}, ${c.note}${conf}`)
+    })
+    const selectableCount = candidates.filter((c) => c.exists).length
+    if (selectableCount === 0) {
+      io.print("no eligible target: no existing AGENTS.md can carry this rule (a CLAUDE.md-only or file-less target is never fallen back to or created). Left unpublished, approval not recorded.")
       return { code: 1 }
     }
-    if (c.kind === "project" && c.confirmedDir !== true) {
-      if (!(await io.confirm(`directory ${c.directory} is not registered as confirmed (projects.json) — register and confirm this directory?`))) {
-        io.print("aborted: directory not confirmed — no decision recorded.")
+    const selRaw = await io.input("select targets (numbers, comma-separated for multiple; empty = abort)", "")
+    const sel = parseSelections(selRaw, candidates.length)
+    if (!sel || sel.length === 0) {
+      io.print("no target selected — approval abandoned, no decision recorded.")
+      return { code: 1 }
+    }
+    for (const ix of sel) {
+      const c = candidates[ix]
+      if (!c || !c.exists) {
+        io.print(`rejected: the selected target does not exist — new files are never created.`)
         return { code: 1 }
       }
-    }
-    if (c.tracked) {
-      if (!(await io.confirm(`${c.path} is git-tracked — explicitly confirm publishing to a tracked file?`))) {
-        io.print("aborted: tracked target not explicitly confirmed — no decision recorded.")
-        return { code: 1 }
+      if (c.kind === "project" && c.confirmedDir !== true) {
+        if (!(await io.confirm(`directory ${c.directory} is not registered as confirmed (projects.json) — register and confirm this directory?`))) {
+          io.print("aborted: directory not confirmed — no decision recorded.")
+          return { code: 1 }
+        }
       }
+      if (c.tracked) {
+        if (!(await io.confirm(`${c.path} is git-tracked — explicitly confirm publishing to a tracked file?`))) {
+          io.print("aborted: tracked target not explicitly confirmed — no decision recorded.")
+          return { code: 1 }
+        }
+      }
+      targets.push(c.path)
     }
-    targets.push(c.path)
+  } else {
+    io.print("system-ride channel: no static targets — this rule will never generate AGENTS.md patches and the plugin never writes files for it.")
   }
   const directoryBoundary = scope.kind === "directory" ? scope.directory : scope.kind === "project" ? cwd : null
 
   // ---- build object, hash, fingerprint (stage 2 snapshot) ----
-  const object = { body, scope, targets, reviewDate, channel, directoryBoundary, agents: null }
+  // system-ride carries agent bindings in the approval object (ride gate
+  // component 4); the static channel never records agents (unhonorable).
+  const object = { body, scope, targets, reviewDate, channel, directoryBoundary, agents: channel === "system-ride" && agents.length > 0 ? agents : null }
   const objectHash = sha256Hex(canonicalJson(object))
   const ruleIdForFp = rule?.id ?? null
   const issueIdForFp = issue?.id ?? null
@@ -237,9 +264,14 @@ export async function runApprove(ctx, id) {
   io.print("body:")
   for (const l of body.split("\n")) io.print(`  | ${l}`)
   io.print(`effective scope: ${describeScope(scope)}`)
-  io.print("agent restriction: none (publishing via AGENTS.md does not distinguish agents)")
+  if (channel === "system-ride") {
+    io.print(`agent restriction: ${agents.length > 0 ? `${agents.join(", ")} (literal match on the current-request agent name)` : "none"}`)
+    io.print("channel: system-ride (the rule body is injected into the system prompt of every model request of matching sessions; persistent within session; the plugin never writes to any file)")
+  } else {
+    io.print("agent restriction: none (publishing via AGENTS.md does not distinguish agents)")
+    io.print(`channel: ${channel} (the patch is applied manually by a human; the plugin never writes to target files)`)
+  }
   io.print(`review date: ${reviewDate}`)
-  io.print(`channel: ${channel} (the patch is applied manually by a human; the plugin never writes to target files)`)
   io.print(`targets (${targets.length}):`)
   for (const t of targets) {
     const c = candidates.find((x) => x.path === t)
@@ -264,26 +296,29 @@ export async function runApprove(ctx, id) {
   }
 
   // ---- validate patches BEFORE recording (target-changed → human review).
-  // For a brand-new rule the real RUL id is minted by recordDecision below, so
+  // Static channel only — system-ride never generates patches. For a
+  // brand-new rule the real RUL id is minted by recordDecision below, so
   // validation uses a placeholder id (segment matching is a no-op then) and
   // the printable blocks are regenerated with the real id after recording. ----
   const previous = rule ? { version: rule.version, body: rule.body } : null
   const targetContexts = []
-  for (const t of targets) {
-    let content = null
-    try {
-      content = fs.readFileSync(t, "utf8")
-    } catch {
-      io.print(`rejected: target ${t} unreadable — target changed? Send for human review (never inferred as user deletion). No decision recorded.`)
-      return { code: 1 }
-    }
-    try {
-      generatePatch(content, { ruleId: rule?.id ?? "RUL-preview", version: nextVersion, body, previous })
-      targetContexts.push({ path: t, candidate: candidates.find((x) => x.path === t), content })
-    } catch (e) {
-      io.print(`rejected: patch generation failed for target ${t} — ${e.message}`)
-      io.print("no decision recorded; manually inspect the target file first.")
-      return { code: 1 }
+  if (channel === "patch-human-apply") {
+    for (const t of targets) {
+      let content = null
+      try {
+        content = fs.readFileSync(t, "utf8")
+      } catch {
+        io.print(`rejected: target ${t} unreadable — target changed? Send for human review (never inferred as user deletion). No decision recorded.`)
+        return { code: 1 }
+      }
+      try {
+        generatePatch(content, { ruleId: rule?.id ?? "RUL-preview", version: nextVersion, body, previous })
+        targetContexts.push({ path: t, candidate: candidates.find((x) => x.path === t), content })
+      } catch (e) {
+        io.print(`rejected: patch generation failed for target ${t} — ${e.message}`)
+        io.print("no decision recorded; manually inspect the target file first.")
+        return { code: 1 }
+      }
     }
   }
 
@@ -302,6 +337,14 @@ export async function runApprove(ctx, id) {
     } catch (e) {
       io.print(`warning: directory confirmation registration failed: ${e.message}`)
     }
+  }
+
+  // system-ride: approval only — delivery is a SEPARATE explicit
+  // authorization (delivery-enable binds the quadruple). No patch output.
+  if (channel === "system-ride") {
+    io.print(`approval recorded: ${decision.id} → rule ${newRule.id} v${newRule.version} (object hash ${decision.objectHash.slice(0, 16)}…) (channel system-ride; no patch to paste — nothing was written to any file)`)
+    io.print(`delivery is a separate explicit authorization: run \`supervisor-memory delivery-enable ${newRule.id}\` to let this rule version ride the system prompt of matching sessions.`)
+    return { code: 0, patches: [], ruleId: newRule.id }
   }
 
   // Regenerate with the real rule id (new rules got one just now), then print.

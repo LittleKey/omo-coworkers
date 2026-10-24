@@ -11,6 +11,8 @@ import path from "node:path"
 import {
   findSyntheticMarker,
   findInternalMetadataKey,
+  findSupervisorMetadata,
+  findSupervisorTextPrefix,
   isAdvisorSessionName,
   findTaskCompletedSignal,
 } from "../lib/filter.mjs"
@@ -489,6 +491,23 @@ test("nudge: injected message shape is append-only user text part", () => {
   assert.equal(msg.parts.length, 1)
   assert.equal(msg.parts[0].type, "text")
   assert.ok(msg.parts[0].text.startsWith("[supervisor-nudge]"))
+  // R32 metadata fix: the synthetic message carries internal supervisor
+  // metadata so filter.mjs can recognize it metadata-first (text prefix is
+  // only a fallback for messages that predate this field).
+  assert.deepEqual(msg.info.metadata, { supervisor: { kind: "nudge" } })
+})
+
+test("filter: supervisor metadata is recognized metadata-first; text prefix stays a fallback", () => {
+  // metadata-first: any text, supervisor kind present → recognized
+  assert.ok(findSupervisorMetadata({ metadata: { supervisor: { kind: "nudge" } } }))
+  assert.ok(findSupervisorMetadata({ metadata: { SUPERVISOR: { kind: "x" } } }), "key lookup is case-insensitive")
+  assert.ok(!findSupervisorMetadata({ metadata: { supervisor: { kind: "" } } }), "empty kind is not a supervisor mark")
+  assert.ok(!findSupervisorMetadata({ metadata: { other: { kind: "nudge" } } }))
+  // fallback: text prefix on a message without metadata (pre-metadata synthetic)
+  const legacy = { role: "user", parts: [{ type: "text", text: "[supervisor-nudge]\nhi" }] }
+  assert.ok(!findSupervisorMetadata(legacy), "no metadata → not recognized by metadata path")
+  assert.ok(findSupervisorTextPrefix(legacy) !== null, "text-prefix fallback still catches it")
+  assert.equal(findSupervisorTextPrefix({ parts: [{ type: "text", text: "hello" }] }), null, "normal text is not a supervisor prefix")
 })
 
 // ---------- integration: hooks (observe mode) ----------

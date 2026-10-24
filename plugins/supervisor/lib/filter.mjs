@@ -34,6 +34,40 @@ const INTERNAL_METADATA_KEYS = [
   "deepworkGoal",
 ]
 
+// Supervisor's own synthetic messages (R32): our injected nudge messages
+// carry info.metadata.supervisor = { kind: "nudge", ruleId, ... }.
+// Recognition is metadata-FIRST; the [supervisor-nudge] text prefix remains
+// a fallback. External synthetic messages must NOT be assumed to carry
+// metadata — the text checks stay authoritative for those.
+export const SUPERVISOR_NUDGE_PREFIX = "[supervisor-nudge]"
+
+// Text-prefix fallback: recognizes supervisor nudge messages that predate
+// the metadata field (or lost it) by their leading marker. Returns the
+// matched part text, or null.
+export function findSupervisorTextPrefix(info) {
+  if (!info || typeof info !== "object" || !Array.isArray(info.parts)) return null
+  for (const part of info.parts) {
+    if (part && typeof part === "object" && part.type === "text" && typeof part.text === "string" && part.text.startsWith(SUPERVISOR_NUDGE_PREFIX)) {
+      return part.text
+    }
+  }
+  return null
+}
+export function findSupervisorMetadata(info) {
+  if (!info || typeof info !== "object") return null
+  // Same loose lookup as findInternalMetadataKey: the supervisor key may sit
+  // on info itself or inside info.metadata, case-insensitively (host shape).
+  for (const obj of [info, info.metadata]) {
+    if (!obj || typeof obj !== "object") continue
+    for (const key of Object.keys(obj)) {
+      if (key.toLowerCase() !== "supervisor") continue
+      const sup = obj[key]
+      if (sup && typeof sup === "object" && typeof sup.kind === "string" && sup.kind.length > 0) return sup
+    }
+  }
+  return null
+}
+
 export function findInternalMetadataKey(info) {
   if (!info || typeof info !== "object") return null
   const lower = new Set()

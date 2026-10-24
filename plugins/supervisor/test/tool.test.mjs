@@ -528,7 +528,10 @@ test("T1 resolveMemoryOptions: only ===true enables; unknown keys ignored", () =
   assert.equal(resolveMemoryOptions(undefined).enable, false)
   assert.equal(resolveMemoryOptions({ memory: { enable: true, nonsense: 1 } }).enable, true)
   const cfg = resolveMemoryOptions({ memory: { enable: true, mock: true, dbPath: "/d", storeRoot: "/s", mockDir: "/m" } })
-  assert.deepEqual(cfg, { enable: true, mock: true, dbPath: "/d", storeRoot: "/s", mockDir: "/m" })
+  assert.deepEqual(cfg, { enable: true, mock: true, dbPath: "/d", storeRoot: "/s", mockDir: "/m", delivery: "off" })
+  assert.equal(resolveMemoryOptions({ memory: { delivery: "inject" } }).delivery, "inject")
+  assert.equal(resolveMemoryOptions({ memory: { delivery: "shadow" } }).delivery, "shadow")
+  assert.equal(resolveMemoryOptions({ memory: { delivery: "nonsense" } }).delivery, "off")
 })
 
 test("T1 full supervisor.setup with throwing transform → setup survives, context hook intact, fault logged", async (t) => {

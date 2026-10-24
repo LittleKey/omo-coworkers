@@ -118,6 +118,9 @@ export function resolveMemoryOptions(options) {
     dbPath: typeof m.dbPath === "string" && m.dbPath ? m.dbPath : null, // test injection
     storeRoot: typeof m.storeRoot === "string" && m.storeRoot ? m.storeRoot : null, // test injection
     mockDir: typeof m.mockDir === "string" && m.mockDir ? m.mockDir : null, // test injection
+    // v6.2 system-ride delivery mode (§III.8): off (default, no-op) |
+    // shadow (gate runs, wouldRide logged, system untouched) | inject.
+    delivery: m.delivery === "shadow" ? "shadow" : m.delivery === "inject" ? "inject" : "off",
   }
 }
 
