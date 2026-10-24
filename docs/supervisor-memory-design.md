@@ -1,8 +1,8 @@
-# Supervisor Memory 设计 v6.1 — 总体方向契约(人控纠错学习闭环 + 运行时演进)
+# Supervisor Memory 设计 v6.2 — 总体方向契约(人控纠错学习闭环 + 运行时演进)
 
-日期: 2026-10-23(v6.1 增补 2026-10-24)
-状态: 方向契约已定(v5.0 = R19+R18+R20+R21 收窄 + M1 已实施; v6.0 增补 Part III 运行时演进: R23→R24→R25 判决定案; **v6.1 增补 §III.8 运行时投递通道契约: R30 判决定案**); 门 A 已 FAIL → 失败分支生效: 手动入口 + 人审静态规则; M1(live) 已上线, P5 试用中
-评审链: (v5.0 及以前见 Part I/II 各节) → 用户两路径提案(对话内批准+会话级 nudge) → Oracle R23(路径1先行/路径2收窄) → 用户"苦涩的教训"(模型足够强后只需工具与描述, 自行编排) → Oracle R24(修订方向 PASS: 模型自主编排+宿主约束权限) → Claude R25(proceed-with-changes: 三改两刀) → v6.0 → 用户要求 project×agent 限定规则(AGENTS.md 通道结构性做不到) → Oracle R30(CHANGES: A 投递去重/D enable 语义/H 通道契约) → v6.1
+日期: 2026-10-23(v6.1 2026-10-24; v6.2 2026-10-25)
+状态: 方向契约已定(v5.0 = R19+R18+R20+R21 收窄 + M1 已实施; v6.0 增补 Part III 运行时演进: R23→R24→R25 判决定案; **v6.2 定稿 §III.8 运行时投递通道=system-ride: R30→Claude R31→探针→Oracle R32 判决定案**); 门 A 已 FAIL → 失败分支生效: 手动入口 + 人审静态规则; M1(live) 已上线, P5 试用中
+评审链: (v5.0 及以前见 Part I/II 各节) → 用户两路径提案(对话内批准+会话级 nudge) → Oracle R23(路径1先行/路径2收窄) → 用户"苦涩的教训"(模型足够强后只需工具与描述, 自行编排) → Oracle R24(修订方向 PASS: 模型自主编排+宿主约束权限) → Claude R25(proceed-with-changes: 三改两刀) → v6.0 → 用户要求 project×agent 限定规则(AGENTS.md 通道结构性做不到) → Oracle R30(CHANGES) → v6.1 → Claude R31(changes-required: 更简替代=system 注入) → 探针证实 system 可变生效(/tmp/opencode/probe-system/) → Oracle R32(CHANGES: 方向成立, system-ride 定为唯一运行时通道) → v6.2
 前任: v5.0(本文件 Part I/II); v4.1/v3.1/v2.0(归档 `docs/archive/`)
 结构: Part I = 总体方向契约(R19 为基 + R21 修订); Part II = 现行细节契约(M1 实施态); Part III = 运行时演进契约(R23–R25 定案, 优先级最高, 与 Part I 冲突处以 Part III 为准)
 
@@ -453,12 +453,15 @@ R24 接受"对话内一句话授权"但 R25 加固了误绑定面。启用前提
 1. **1a 工具面(先行)**: `report_correction`(已有)+`draft_rule`+`prepare_publish`+只读视图; 确认走 CLI 三段式(已实施)。**1a 不含 enable_rule**(R25 Q2: 授权类原语不与起草类同船)。
 2. **1b 对话内确认**: III.2 四前提逐一验证通过后启用; 否则无限期停留 1a。
 3. **step 2 自动候选**: 政策开关用户显式开启; 观察 linkage(56%)而非 recall; 门 A 原结论保留(自动检测器不复活)。
-4. **step 3 会话启用**: enable_rule/disable_rule 上线。**触发条件修订(v6.1)**: 原条件"仅当 P5 摩擦日志出现会话内遗忘证据"已被更强触发取代——2026-10-24 用户要求规则按 project×agent 限定生效(AGENTS.md 静态通道结构性无法按 agent 限定), 投递契约见 §III.8, 授权语义/通道契约按 R30 三修正执行。
+4. **step 3 会话启用**: enable_rule/disable_rule 上线。**触发条件修订(v6.1)**: 原条件"仅当 P5 摩擦日志出现会话内遗忘证据"已被更强触发取代——2026-10-24 用户要求规则按 project×agent 限定生效(AGENTS.md 静态通道结构性无法按 agent 限定), 投递契约见 §III.8(v6.2: system-ride 形态, R31+R32 判决定案)。
 - 2 与 3 **串行不并行**(单人使用者, 重叠变更使 P5 分段不可读); 各步独立回退, 任一步失败不拖累已上线部分。
 
-## III.6 评审记录(v6.0; v6.1 增补 R30)
+## III.6 评审记录(v6.0; v6.1 增补 R30; v6.2 增补 R31/探针/R32)
 
 - R30-oracle(2026-10-24, ses_e9cfad3baffewFi9rmItNulE2a, 基于 91a1c66 静态检查): 运行时投递方案 **CHANGES(方向保留)**。A 投递时机=首真人消息后首个合格请求/让位后等下一真人回合/**去重改持久化 (session,rule) 键**(turn binding 不能保证会话级一次); B agent 绑定=当前请求 agent 名字面匹配, 复用 agents 字段, 不新增 agentTags, 未知拒投, 改名人工重确认; C shadow=人工正反例+≥10 真实会话核对, 误投即停, 不按时长放行; **D 高优先**=CLI-only 正确但 kind=enable 语义是"重新批准新版本"非投递开关, 须新决定种类并区分会话授权/跨会话自动启用; E=预算不扩, memory ≤1 封/会话, nudge 优先, ≤1200 整条拒投不截断; F=单规则单通道, 切换先清残留, disable 不撤回已见; G=无更简路径; **H 高优先**=approve 须绑定正文+范围+agent+通道四元组, runtime 永不生成静态补丁, 且此步是 step 3 非 step 2(迁移条件已修订)。最小修改集=A 过滤去重+D 授权语义+H 通道契约, C 验收。
+- Claude R31(2026-10-24, ses_e9c6a2fe3ffe7uaCTdPPaJRwNi, 记录 …/2003036e…/e000005): §III.8 v6.1 **changes-required**: 通道门缺失/崩溃窗口(先写后投)/计数持久化/去重增长独立文件+按会话删除修剪/静默断绑 digest 哨兵/newest-wins 饿死(我自加第8条被驳回)/饥饿度量/≤1200 对剩余预算校验/delivery-enable 绑版本哈希+改版复位/发送时重读/合成识别元数据化; **Q7 提出 system 字段注入替代(我们与 oracle 均未评估过)**。
+- 探针(2026-10-25, /tmp/opencode/probe-system/report.md): system=Array<{type,text}> 可变且生效于全部上游请求, 宿主每请求重建(须幂等重追加), 子会话覆盖, title 绕过 → system-ride 成立。
+- Oracle R32(2026-10-25, ses_e9cfad3baffewFi9rmItNulE2a): **CHANGES(方向成立)**: A system-ride 可作唯一运行时通道(撤回 R30-G"无更简"); B 子会话=明确获批才开通, 验自身身份不继承父授权, 只开放规则读取注入; C 每请求 1200 含标头, 固定顺序整条, 超限跳过+digest, 不轮转; D shadow 验收补请求内重复/压缩/重启/停用/改版/异常形状, mock 核原 system 未改写+每规则恰一份; E 常驻与 system 优先级变化须显式批准, 会话授权绑 sessionId, 跨会话启用另行确认; F 无更简; **G 高优先**: "无需撤回已见"表述错误(只承诺停止追加)/通道切换查残留/请求内防重(每请求重建≠push 幂等)/形状异常仅关 memory+升级重跑探针。最小修改集=授权范围+撤回表述+请求内防重+验收。元数据过滤独立修。
 
 - R23-oracle(2026-10-23, 复活的 ses_e9cfad3baffewFi9rmItNulE2a): 用户两路径 REJECT 原样; 路径1(对话内批准+常规编辑工具代贴)先行; 路径2(自建自启用持续 nudge)重开 R16 回路, 收窄为"每根会话 1 提醒名额/下个真实用户回合投递/每规则每会话一次"的有界试验; "人贴"修订为"人授权 agent 代贴"。
 - 用户"苦涩的教训"(2026-10-23, 原话要点): 产物应随模型增强而自动增强; 假设模型足够强, 只需给工具与描述, 它自行编排解决具体问题, 而非被过度具体地指导决策与执行。
@@ -485,26 +488,31 @@ R24 接受"对话内一句话授权"但 R25 加固了误绑定面。启用前提
 - **幸存窄道**: 捕获的纠正复发**且**检查可机械时, 按需并入既有 L0 规则引擎(如 git diff 范围夹带检查), **不建新子系统**。
 - **唯一追踪指标**: 规则落地后同类纠正是否复发(P5 周报一行)。它是未来任何旁路组件的正当性来源。
 
-## III.8 运行时投递通道契约(step 3, R30 判决定案)
+## III.8 运行时投递通道契约(step 3, v6.2: R31+R32 判决定案, system-ride 形态)
 
-定位: 已批准规则的 **project×agent 有界投递**。只投递、不检测(§III.7 维持关闭); 存在理由=AGENTS.md 静态通道按目录加载、结构性无法按 agent 限定。规则存储不变(统一根 store), AGENTS.md 仅是 v1 静态出口, 本通道是第二个出口。
+定位: 已批准规则的 **project×agent 有界投递**。只投递、不检测(§III.7 维持关闭); 存在理由=AGENTS.md 静态通道按目录加载、结构性无法按 agent 限定。**形态=system prompt 骑乘**(探针 /tmp/opencode/probe-system/ 实测: v2.1.2 context hook 的 event.system 为 Array<{type,text}>, 可变且生效于全部上游请求, 宿主每请求重建, 子会话同样触发): 匹配规则的正文在**每次模型请求**时幂等追加到 system 数组尾——会话内常驻、抗压缩、重启失效即重注、零投递状态机。v6.1 的消息投递机器(持久化去重/先写后投/信封打包/轮转/预算让位)全部废弃。
 
-**投递门(deliver 匹配器, 全部确定性, fail-closed)**:
-1. 规则 approved 且投递开关 enabled(授权语义见下);
-2. 仅根会话(复用现有子会话黑名单);
+**匹配门(deliver 匹配器, 全部确定性, fail-closed)**:
+1. 规则 approved 且 delivery-enabled 且 `channel == system-ride`(通道枚举 = static-agents-md | system-ride; 一条规则一个通道);
+2. 会话范围: v1 默认仅根会话; **明确获批的子代理**可开通(子会话验证自身 project/agent, 不继承父授权; 只开放规则读取注入, L0 黑名单与审批权限不变);
 3. project 匹配: `session.project_id == rule.scope.projectId`(user-global 规则不限项目);
-4. agent 匹配: 宿主提供的**当前请求 agent 名**与 `rule.agents[0]` 字面相等; `agents` 空=不限 agent(投所有根会话); agent 名未知/缺失→拒投; agent 改名后旧绑定不投, 须人工重新确认(不用定义 hash);
-5. **首条真人消息后的首个合格请求**才可投(含首轮); 让位于 nudge(B 规则)后等下一真人回合再试;
-6. **持久化去重键 `(sessionId, ruleId)`**: 每规则每会话恰好一次, 跨重载/改版/服务重启不重置(存 store, 不用按回合的 turn binding);
-7. 合成消息在进入任何轮次计数与证据扫描前先被现有 filter 识别(防 B2 类合成污染);
-8. 多条合格规则竞争"每会话 1 封 memory"名额时, 取**最近批准**且未投递的一条, 其余记 `skipped(memory-cap)` 留待下会话。
+4. agent 匹配: 宿主提供的**当前请求 agent 名**与 `rule.agents[0]` 字面相等; `agents` 空=不限 agent; agent 名未知/缺失→拒投; 改名后旧绑定静默停投(不自动重绑), 由 digest 哨兵行暴露。
 
-**投递形态**: 走 supervisor 单出口追加一条 `[supervisor-memory]` 合成消息; **只承诺单请求可见, 不称常驻**; 正文连包装 ≤1200 字符, **整条装入, 超限拒投并记录原因, 绝不截断**; memory 每会话至多 1 封; nudge 优先; 与 B 规则共享 3 次/会话/1200 字符总帽, 不刷新。
+**投递形态与限额**:
+- 每次 context hook 把全部匹配规则按**固定顺序**(规则批准时间)整条装入: 头 `[supervisor-memory:rule:<id>:v<version>]` + 正文;
+- **每请求总额 ≤1200 字符(含标头)**: 依固定顺序装入, 装不下的整条跳过并记日志+列入 digest, 绝不截断, **不轮转**(持续溢出=人裁剪规则的信号);
+- **只 push, 绝不改写既有 system 元素**;
+- **请求内防重**: 同一请求内 hook 多次调用只注一次(宿主每请求重建 system ≠ push 幂等, 须请求内护栏);
+- 形状防御: system 非预期形状(非数组/元素非 {type,text})→**仅关闭 memory 注入**(插件其余功能不受影响), 宿主升级后重跑探针再恢复。
 
-**授权语义(R30-D 修正)**: 投递开关用**新决定种类** `delivery-enable` / `delivery-disable`(CLI 人工记录), 与既有 `kind=enable`(=停用规则重新批准为新版本, store.mjs:1333-1346)严格区分; "会话授权"(1b 对话内一句话)与"跨会话自动启用"分离, 后者 v1 不做; v1 enable 仅 CLI。
+**授权语义**: 新决定种类 `delivery-enable` / `delivery-disable`(CLI 人工记录), 绑定 **(ruleId, version, bodyHash, channel)**; 改版重批准→投递自动复位 disabled; **常驻性与 system 指令优先级变化属显式批准语义**(批准对象须载明"将随该会话每次模型请求注入 system"); 会话授权(1b)须绑 sessionId; 跨会话启用另行确认, 旧授权不自动扩大; v1 enable 仅 CLI。
 
-**approve 通道契约(R30-H 修正)**: 审批对象四元组绑定=**正文+范围+agent+通道**; `channel = static-agents-md | runtime-delivery`; runtime 通道规则**永不生成静态补丁/目标**; 一条规则同一时刻只有一个通道; 通道切换须先确认旧通道残留已移除; disable/关闭只阻止后续投递, **不撤回模型已见内容**。
+**发送时校验**: hook 时重读决定记录+四元组(正文+范围+agent+通道)哈希复核, 不符即拒注。
 
-**配置**: `memory.delivery = off | shadow | inject`, 默认 off; shadow 只记 wouldDeliver 日志(含匹配依据与跳过原因), 不注入。
+**撤回表述(R32-G 修正)**: disable/关闭/换通道只承诺**停止追加**; 历史回答与压缩摘要中的旧规则文本不因此消失; 通道切换前检查旧静态残留(AGENTS.md 受管段), 异常即停用; 不做每请求扫文件。
 
-**shadow 验收(R30-C 修正)**: 人工预定义正反例答案——正例: 该项目该 agent 根会话; 反例: 跨项目/错 agent/子会话/身份未知/停用规则/服务重载后不重复; 再核对 ≥10 个真实会话; **任一误投→立即停**, 不按运行时长放行 inject。
+**配置与 shadow 验收**: `memory.delivery = off | shadow | inject`, 默认 off。shadow 记 wouldRide(匹配依据+跳过原因), 验收正反例=身份与授权正反例(跨项目/错 agent/未获批子会话/身份未知/停用/改版后未 re-enable)+同对象重复调用(请求内防重)+压缩后+服务重启后+异常形状; mock 抓包核=原 system 元素未被改写+每规则恰一份。
+
+**配套独立修正**: B 族 nudge 合成消息携带内部元数据且 filter 按元数据识别(现状 filter.mjs:9-16 部分依赖文本前缀, 用户手打前缀会被误滤; 不假定外部合成消息已有元数据)。digest 哨兵行: 每条 enabled 运行时规则显示"近 N 个合格会话 0 骑乘+所见 agent 名分布"。
+
+**原则修订(v6.2)**: 注入表面分类学=①宿主原生 AGENTS.md(静态, 目录加载, 全 agent) ②插件 system-ride(本通道, project×agent 精确, 常驻) ③插件合成消息出口(仅 L0 B 族 nudge, 3 次/1200)。"单出口"原则细化为**每表面各一出口+各自预算**; memory 族永不进合成消息出口。
