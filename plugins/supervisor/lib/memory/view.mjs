@@ -8,19 +8,20 @@
 // approval-flow details (no decision ids, targets, or hashes). The human
 // review entry point is the supervisor-memory CLI digest command.
 //
-// Description lint (III.0): object semantics / effect / failure statements
-// only. Amendment trail: initial text 2026-10-23; same day, translated to
-// English (R26 three-part format, user request m01908) — semantics
-// unchanged, no recorded corrections yet.
-import { gateSession, openStoreFor, storeOpenError } from "./common.mjs"
+// R33 phase 1: the tool name keeps its memory_ prefix (it already had one);
+// the description is the slim two-sentence form, and every failure returns
+// the structured envelope {ok:false, code, message, nextTool, retry}.
+//
+// Description lint (III.0, R33 form). Amendment trail: initial text
+// 2026-10-23; same day, translated to English (R26 three-part format, user
+// request m01908); R33 phase 1 slimmed it — semantics unchanged, no recorded
+// corrections yet.
+import { gateSession, memoryError, openStoreFor, sessionRejected, storeOpenError } from "./common.mjs"
 
 export const MEMORY_STATUS_TOOL_NAME = "memory_status"
 
 export const TOOL_DESCRIPTION =
-  "Read-only view of the current project's memory state; no input. " +
-  "Effect: returns the current project's and user-global active rules (id, one-line summary, status, version) plus pending candidate counts; contains no other projects' data and no approval-flow details. " +
-  "Human review entry point: the supervisor-memory CLI digest command. " +
-  "Failure: an uninitialized or unreadable store returns an explicit error; the database is never auto-created."
+  "Inspect memory rules and pending candidates in the current scope. Read-only."
 
 const INPUT_SCHEMA = { type: "object", properties: {}, additionalProperties: false }
 
@@ -37,12 +38,12 @@ export function buildMemoryStatusTool({ cfg }) {
   }
 }
 
-/** Never throws; every failure path returns {ok:false, error}. */
+/** Never throws; every failure path returns the structured envelope (R33). */
 export async function executeMemoryStatus(rawArgs, context, { cfg }) {
   try {
     return await runMemoryStatus(context, { cfg })
   } catch (err) {
-    return { ok: false, error: `memory_status internal error: ${err?.message ?? err}` }
+    return memoryError("INTERNAL", `memory_status internal error: ${err?.message ?? err} — report it; do not retry unchanged`)
   }
 }
 
@@ -57,14 +58,14 @@ function oneLineSummary(body) {
 
 async function runMemoryStatus(_context, { cfg }) {
   const gate = gateSession(_context, cfg)
-  if (!gate.ok) return { ok: false, error: gate.error }
+  if (!gate.ok) return sessionRejected(gate.error)
   const { projectId } = gate
 
   let store
   try {
     store = openStoreFor(cfg)
   } catch (err) {
-    return { ok: false, error: storeOpenError(err) }
+    return storeOpenError(err)
   }
 
   // Current project + user-global (this session loads both); directory-scope

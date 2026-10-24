@@ -1,4 +1,4 @@
-// Evidence validation for report_correction (m1-plan §2 D4, design v5.0
+// Evidence validation for memory_record_correction (m1-plan §2 D4, design v5.0
 // II.1 证据与溯源). Full D4 semantics, fail-closed:
 //   ① the message must exist in the host DB with type='user'
 //   ② its session's project_id must equal the current ctx.location.project.id

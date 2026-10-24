@@ -1,4 +1,5 @@
-// T1/T2 for the report_correction tool face (m1-plan §4-T1/T2, decisions
+// T1/T2 for the memory_record_correction tool face (named report_correction
+// before the Oracle R33 phase-1 rename; m1-plan §4-T1/T2, decisions
 // D1/D3/D4; design v5.0 II.2/II.3). T2 = source & idempotency semantics via a
 // fake host DB (node:sqlite, same shape P0 verified); T1 = host regression at
 // unit level (enable off/on, registration fault isolation).
@@ -152,7 +153,7 @@ function makeCtx({ memory, throwInTransform = false } = {}) {
   return { ctx, state }
 }
 
-/** Register with memory enabled and return the report_correction tool. */
+/** Register with memory enabled and return the memory_record_correction tool. */
 async function registeredTool(t, { dbPath, storeRoot, mockDir, mock = false } = {}) {
   const { ctx, state } = makeCtx({
     memory: { enable: true, mock, dbPath, storeRoot, mockDir },
@@ -160,15 +161,28 @@ async function registeredTool(t, { dbPath, storeRoot, mockDir, mock = false } = 
   const res = await registerMemoryTool(ctx)
   assert.equal(res.registered, true)
   const tool = state.added.find((tl) => tl.name === TOOL_NAME)
-  assert.ok(tool, "report_correction must be among added tools")
+  assert.ok(tool, "memory_record_correction must be among added tools")
   return { tool, ctx, state }
 }
 
-function expectReject(res, fragment) {
+const RETRY_VALUES = new Set(["requires_user_confirmation", "safe", "never"])
+
+/**
+ * R33 structured error envelope shape. Every rejection must be exactly
+ * {ok:false, code:"MEMORY_<STABLE>", message, nextTool, retry} — no ack, no
+ * legacy free-form `error` field.
+ */
+function expectReject(res, fragment, { code = null } = {}) {
   assert.equal(res.ack, undefined, "rejection must carry no ack receipt")
   assert.equal(res.ok, false)
-  assert.equal(typeof res.error, "string")
-  if (fragment) assert.ok(res.error.includes(fragment), `error ${JSON.stringify(res.error)} must include ${JSON.stringify(fragment)}`)
+  assert.equal(res.error, undefined, "legacy free-form error field must be gone (R33)")
+  assert.match(res.code, /^MEMORY_[A-Z_]+$/, `code must be MEMORY_<STABLE>, got ${JSON.stringify(res.code)}`)
+  assert.equal(typeof res.message, "string")
+  assert.ok(res.message.length > 0, "message (reason + fix) must be non-empty")
+  assert.equal(res.nextTool, null, "phase-1 nextTool is always null")
+  assert.ok(RETRY_VALUES.has(res.retry), `retry must be one of requires_user_confirmation|safe|never, got ${JSON.stringify(res.retry)}`)
+  if (code) assert.equal(res.code, `MEMORY_${code}`)
+  if (fragment) assert.ok(res.message.includes(fragment), `message ${JSON.stringify(res.message)} must include ${JSON.stringify(fragment)}`)
 }
 
 // ---------- evidence.mjs (D4 unit) ----------
@@ -489,6 +503,50 @@ test("T2 missing store → explicit init hint, directory never created", async (
   assert.equal(fs.existsSync(storeRoot), false, "store root must not be auto-created")
 })
 
+// ---------- R33 structured error envelope ----------
+
+test("R33: cross-project evidence → MEMORY_EVIDENCE_REJECTED envelope, nextTool null, retry never", async (t) => {
+  const dbPath = createHostDb(t)
+  const storeRoot = makeStoreRoot(t)
+  const { tool } = await registeredTool(t, { dbPath, storeRoot })
+  const res = await tool.execute({ description: "x", evidence: "msg_user_b1" }, { sessionID: "ses_root_a" })
+  expectReject(res, "another project", { code: "EVIDENCE_REJECTED" })
+  assert.equal(openStore(storeRoot, QUICK).listEvents().length, 0)
+})
+
+test("R33: unknown issueId → MEMORY_ISSUE_NOT_FOUND envelope", async (t) => {
+  const dbPath = createHostDb(t)
+  const storeRoot = makeStoreRoot(t)
+  const { tool } = await registeredTool(t, { dbPath, storeRoot })
+  const res = await tool.execute(
+    { description: "x", evidence: "msg_user_a1", issueId: "ISS_MISSING" },
+    { sessionID: "ses_root_a" },
+  )
+  expectReject(res, "does not exist in the store", { code: "ISSUE_NOT_FOUND" })
+})
+
+test("R33: subagent caller → MEMORY_SESSION_REJECTED envelope", async (t) => {
+  const dbPath = createHostDb(t)
+  const storeRoot = makeStoreRoot(t)
+  const { tool } = await registeredTool(t, { dbPath, storeRoot })
+  const res = await tool.execute({ description: "x", evidence: "msg_user_a1" }, { sessionID: "ses_child_a" })
+  expectReject(res, "can only be used in a root session", { code: "SESSION_REJECTED" })
+})
+
+test("R33: live lock holder → MEMORY_STORE_LOCKED envelope with retry:safe (transient)", async (t) => {
+  const dbPath = createHostDb(t)
+  const dir = withTmp(t, "memlocked-")
+  const storeRoot = path.join(dir, "memory")
+  initStore(storeRoot)
+  // Live holder: OUR pid → the store's pid-liveness check treats it as held.
+  fs.writeFileSync(path.join(storeRoot, FILE_LOCK), JSON.stringify({ pid: process.pid, ts: Date.now(), host: "test" }), { mode: 0o600 })
+  const { tool } = await registeredTool(t, { dbPath, storeRoot })
+  const res = await tool.execute({ description: "x", evidence: "msg_user_a1" }, { sessionID: "ses_root_a" })
+  expectReject(res, "locked by another process", { code: "STORE_LOCKED" })
+  assert.equal(res.retry, "safe", "a held lock is transient — retry is safe")
+  assert.equal(res.nextTool, null)
+})
+
 // ---------- T1 host regression (unit level) ----------
 
 test("T1 memory.enable off (default) → not registered, tool surface untouched", async (t) => {
@@ -507,13 +565,13 @@ test("T1 memory.enable on → the four-tool face registered, each codemode:false
   const { ctx, state } = makeCtx({ memory: { enable: true, dbPath } })
   const res = await registerMemoryTool(ctx)
   assert.equal(res.registered, true)
-  assert.deepEqual(res.tools, ["report_correction", "draft_rule", "prepare_publish", "memory_status"])
+  assert.deepEqual(res.tools, ["memory_record_correction", "memory_draft_rule", "memory_prepare_publish", "memory_status"])
   assert.equal(state.transformCalls, 4)
   assert.equal(state.reloaded, 1)
   assert.equal(state.added.length, 4)
   assert.deepEqual(
     state.added.map((tl) => tl.name),
-    ["report_correction", "draft_rule", "prepare_publish", "memory_status"],
+    ["memory_record_correction", "memory_draft_rule", "memory_prepare_publish", "memory_status"],
   )
   for (const tool of state.added) {
     assert.deepEqual(tool.options, { codemode: false })

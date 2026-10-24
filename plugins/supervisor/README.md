@@ -243,17 +243,28 @@ the same object serialized into `content`.
 
 | Tool | Input | Effect |
 | --- | --- | --- |
-| `report_correction` | `description` (required), `evidence` (1–3 real user message IDs; omittable — omitted or unresolvable ACP refs fall back to the current turn's triggering user message), `topic`, `issueId` (optional) | Appends a correction event to the pending queue (idempotent per source). Host-verified evidence only (same project, root session, `type: 'user'`); fail-closed. Never returns rule content. |
-| `draft_rule` | `issueId`, `body` (≤ 10 lines) | Writes a rule-text draft for one `draft` candidate into the shared `digest/drafts.json` view (same writer the CLI uses). Draft-state only — no decision, no authorization. |
-| `prepare_publish` | `ruleId` | For an approved rule, regenerates the apply-patch text with the exact composition the CLI approve printer uses (byte-identical) after re-verifying the D8 target conditions from current state. Zero file writes, no publish registration — the D9 presence check stays a human CLI `digest` read-only action. |
+| `memory_record_correction` | `description` (required), `evidence` (1–3 real user message IDs; omittable — omitted or unresolvable ACP refs fall back to the current turn's triggering user message), `topic`, `issueId` (optional) | Appends a correction event to the pending queue (idempotent per source). Host-verified evidence only (same project, root session, `type: 'user'`); fail-closed. Never returns rule content. |
+| `memory_draft_rule` | `issueId` (required), `body` (required, ≤ 10 lines) | Writes a rule-text draft for one `draft` candidate into the shared `digest/drafts.json` view (same writer the CLI uses). Draft-state only — no decision, no authorization. |
+| `memory_prepare_publish` | `ruleId` (required) | For an approved rule, regenerates the apply-patch text with the exact composition the CLI approve printer uses (byte-identical) after re-verifying the D8 target conditions from current state. Zero file writes, no publish registration — the D9 presence check stays a human CLI `digest` read-only action. |
 | `memory_status` | — | Minimal read-only view: the caller's project's rules (id / one-line summary / status / version, plus user-global), pending candidate and event counts, and the human review entry point (`supervisor-memory digest`). No other project's data. |
+
+Tool failures use one structured envelope (Oracle R33): `{ ok: false, code:
+"MEMORY_<STABLE_CODE>", message, nextTool, retry }` — `message` is one
+sentence of reason plus fix (the lazy help), `nextTool` is `null` in this
+phase, and `retry` is one of `requires_user_confirmation` / `safe` /
+`never`. Stable codes include `MEMORY_STORE_MISSING`, `MEMORY_STORE_LOCKED`,
+`MEMORY_EVIDENCE_REJECTED`, `MEMORY_ISSUE_NOT_FOUND`, `MEMORY_RULE_NOT_FOUND`,
+`MEMORY_NOT_DRAFTABLE`, `MEMORY_INVALID_INPUT`, `MEMORY_SESSION_REJECTED`;
+store failures pass through the store's own code family. Success receipts
+keep their existing shape (`ok: true, …`).
 
 Design boundaries (v6.0 Part III): no tool accepts a `confirmed`/`approved`
 parameter — confirmation is a host event or a human TTY action, never a model
-supplied argument; drafts never affect decisions; `prepare_publish` receipts
-always state the patch is **not applied**. Tool descriptions follow the §III.0
-lint (object semantics, inputs, effects, failure behavior — no step-by-step
-guidance); amendments are recorded via the documented-correction process.
+supplied argument; drafts never affect decisions; `memory_prepare_publish`
+receipts always state the patch is **not applied**. Tool descriptions follow
+the §III.0 lint (object semantics, inputs, effects, failure behavior — no
+step-by-step guidance, no error catalog — parameter detail lives in the
+input schema); amendments are recorded via the documented-correction process.
 
 With `memory.mock: true`, tool runs validate the full chain but write nothing
 to the store; receipts carry `mock: true` and are collected per-session under
@@ -313,12 +324,13 @@ report/merge/draft regen cannot revive authorization; non-TTY refused), T5
 tracked files, >10-line bodies, externally changed targets), T6 (zero writes
 to target files across all normal and error paths) and the `--draft` mock
 endpoint (success / HTTP failure / timeout, request carries only the named
-candidate). `test/tool.test.mjs` covers the `report_correction` tool face
+candidate). `test/tool.test.mjs` covers the `memory_record_correction` tool face
 (evidence validation matrix, root/child session gate, current-turn fallback,
-idempotency, mock mode). `test/step1a.test.mjs` covers the step-1a tools:
-draft/CLI view co-existence, no-decision guarantee, patch byte-identity with
-the CLI generation, D8 rejection matrix, project isolation of `memory_status`,
-and the description lint. `test/ride.test.mjs` covers the v6.2 system-ride
+idempotency, mock mode, structured error envelopes). `test/step1a.test.mjs`
+covers the step-1a tools: draft/CLI view co-existence, no-decision guarantee,
+patch byte-identity with the CLI generation, D8 rejection matrix, project
+isolation of `memory_status`, the description lint, and the structured error
+envelopes. `test/ride.test.mjs` covers the v6.2 system-ride
 face: every matching gate negative, budget whole-item skip, fixed order,
 marker idempotence, shape-guard isolation, delivery quadruple binding and
 re-approval reset (against a real store), shadow log-only behavior, the CLI

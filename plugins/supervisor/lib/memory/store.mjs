@@ -1048,7 +1048,7 @@ export class Store {
   }
 
   /**
-   * Record one sourced correction event (the report_correction write path).
+   * Record one sourced correction event (the memory_record_correction write path).
    * Idempotent by source (sessionId + messageId): a duplicate returns
    * {duplicate:true} with the existing event and writes nothing. With
    * issueId: the issue must exist (unknown ids are rejected, never silently

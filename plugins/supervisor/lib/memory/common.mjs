@@ -19,6 +19,7 @@ import path from "node:path"
 import { openStore, StoreError, defaultMemoryRoot } from "./store.mjs"
 import { defaultHostDbPath, openHostDbReadOnly } from "./evidence.mjs"
 
+
 export const SESSION_SQL = "SELECT id, parent_id, project_id FROM session_v2 WHERE id = ?"
 
 export function checkCurrentSession({ dbPath, sessionID }) {
@@ -71,13 +72,74 @@ export function openStoreFor(cfg) {
   return openStore(cfg.storeRoot ?? defaultMemoryRoot())
 }
 
-/** Human-facing hint for a closed/unavailable store (never auto-init). */
+/**
+ * Structured error envelope (Oracle R33 tool-face phase 1). Every tool
+ * failure returns ONE shape: {ok:false, code, message, nextTool, retry}.
+ *   code     stable "MEMORY_<CODE>"; the STORE_* family passes the store's
+ *            own stable codes through unchanged (STORE_MISSING, STORE_LOCKED,
+ *            STORE_CORRUPT/PERM/INCOMPLETE/STATE/…)
+ *   message  one sentence of reason + fix — lazy help lives here, never in
+ *            the tool descriptions
+ *   nextTool null in this phase (memory_status exposes no ids, so no next
+ *            tool call helps)
+ *   retry    "safe" — transient, retrying the same call is safe (held lock)
+ *            "requires_user_confirmation" — a human must act first
+ *            (init / repair / target review)
+ *            "never" — retrying unchanged is pointless or forbidden
+ *            (fix the arguments, or the outcome is policy)
+ */
+export function memoryError(code, message, { nextTool = null, retry = "never" } = {}) {
+  return { ok: false, code: `MEMORY_${code}`, message: String(message), nextTool, retry }
+}
+
+/** Structured envelope for a fail-closed session/identity gate rejection. */
+export function sessionRejected(reason) {
+  return memoryError(
+    "SESSION_REJECTED",
+    `${reason} — memory tools run only in a root session whose session_v2 row exists and carries project_id; retries cannot change session identity`,
+  )
+}
+
+/** Structured envelope for a closed/unavailable store (never auto-init). */
 export function storeOpenError(err) {
-  if (err instanceof StoreError && err.code === "STORE_MISSING") {
-    return "memory store not initialized — run the supervisor-memory CLI init command first (a missing database is never auto-created)"
+  if (err instanceof StoreError) {
+    if (err.code === "STORE_MISSING") {
+      return memoryError(
+        "STORE_MISSING",
+        "memory store is not initialized — run the supervisor-memory CLI init command first (a missing store is never auto-created)",
+        { retry: "requires_user_confirmation" },
+      )
+    }
+    if (err.code === "STORE_LOCKED") {
+      return memoryError(
+        "STORE_LOCKED",
+        `memory store is locked by another process — retry the same call shortly (${err?.message ?? err})`,
+        { retry: "safe" },
+      )
+    }
+    return memoryError(
+      err.code, // STORE_CORRUPT / STORE_PERM / STORE_INCOMPLETE / STORE_STATE / … — the store's stable family
+      `memory store is unavailable (${err.code}): ${err?.message ?? err} — repair it via the supervisor-memory CLI digest command (fail-closed)`,
+      { retry: "requires_user_confirmation" },
+    )
   }
-  const code = err instanceof StoreError ? err.code : "UNKNOWN"
-  return `memory store failed to open (${code}): ${err?.message ?? err} — rejected this call (fail-closed)`
+  return memoryError(
+    "STORE_UNKNOWN",
+    `memory store failed to open: ${err?.message ?? err} — repair it via the supervisor-memory CLI digest command (fail-closed)`,
+    { retry: "requires_user_confirmation" },
+  )
+}
+
+/**
+ * Map a StoreError from any store call to its structured envelope (the
+ * store's own stable code family passes through via storeOpenError); any
+ * other error is rethrown and stays an INTERNAL envelope at the tool
+ * boundary. STORE_INPUT means the tool assembled a bad store argument — a
+ * tool bug, not a store condition, so it is not passed through either.
+ */
+export function mapStoreError(err) {
+  if (err instanceof StoreError && err.code !== "STORE_INPUT") return storeOpenError(err)
+  throw err
 }
 
 /** Isolated directory for mock receipts — never the production store root. */

@@ -1,5 +1,5 @@
 // v6.0 Part III step 1a tool-face tests (design §III.0/III.1/III.5):
-// draft_rule / prepare_publish / memory_status, plus the description lint.
+// memory_draft_rule / memory_prepare_publish / memory_status, plus the description lint.
 //
 // Isolation mirrors test/tool.test.mjs: every test gets its own mkdtemp
 // directories (fake host DB, store root, mock dir, target AGENTS.md); the
@@ -84,7 +84,7 @@ async function executeStatusTool(cfg, args = {}, context = CTX_A) {
   return JSON.parse((await buildMemoryStatusTool({ cfg }).execute(args, context)).content)
 }
 
-/** One draft candidate in proj_a, created exactly as report_correction does. */
+/** One draft candidate in proj_a, created exactly as memory_record_correction does. */
 function seedIssue(store, { projectId = PROJ_A, sessionId = "ses_root_a", messageId = "msg_x" } = {}) {
   const res = store.appendEvent({
     source: { sessionId, projectId, messageId },
@@ -96,11 +96,22 @@ function seedIssue(store, { projectId = PROJ_A, sessionId = "ses_root_a", messag
   return res.event.issueId
 }
 
-function expectReject(res, fragment) {
+/**
+ * Envelope assertion for every tool failure (Oracle R33): stable MEMORY_*
+ * code, one-line message carrying `fragment`, nextTool null (phase 1),
+ * retry from the enum — and none of the success fields.
+ */
+function expectReject(res, fragment, { code, retry } = {}) {
   assert.equal(res.ok, false)
   assert.equal(res.ack, undefined, "rejection must carry no ack receipt")
-  assert.equal(typeof res.error, "string")
-  if (fragment) assert.ok(res.error.includes(fragment), `error ${JSON.stringify(res.error)} must include ${JSON.stringify(fragment)}`)
+  assert.equal(res.error, undefined, "old string-error shape is gone")
+  assert.match(res.code, /^MEMORY_[A-Z_]+$/)
+  assert.equal(typeof res.message, "string")
+  assert.equal(res.nextTool, null, "phase 1 exposes no next-tool pointers")
+  assert.ok(["requires_user_confirmation", "safe", "never"].includes(res.retry), `retry ${res.retry} must be in the enum`)
+  if (code) assert.equal(res.code, code)
+  if (retry) assert.equal(res.retry, retry)
+  if (fragment) assert.ok(res.message.includes(fragment), `message ${JSON.stringify(res.message)} must include ${JSON.stringify(fragment)}`)
 }
 
 /** Project-scope AGENTS.md target + confirmed project directory registration. */
@@ -128,9 +139,9 @@ function approveRule(store, { file, body = APPROVE_BODY, scope = { kind: "projec
   return store.recordDecision({ kind: "approve", ruleId: null, object })
 }
 
-// ---------- draft_rule ----------
+// ---------- memory_draft_rule ----------
 
-test("draft_rule: 草稿落盘 drafts.json 且与 CLI 共存(同一 saveDraft 写入函数)", async (t) => {
+test("memory_draft_rule: 草稿落盘 drafts.json 且与 CLI 共存(同一 saveDraft 写入函数)", async (t) => {
   const cfg = makeCfg(t)
   const store = openStore(cfg.storeRoot, QUICK)
   const issueId = seedIssue(store)
@@ -150,7 +161,7 @@ test("draft_rule: 草稿落盘 drafts.json 且与 CLI 共存(同一 saveDraft �
   assert.ok(typeof view.drafts[issueId].ts === "number")
 })
 
-test("draft_rule: 未批准 — 不产生 decision、不改候选状态", async (t) => {
+test("memory_draft_rule: 未批准 — 不产生 decision、不改候选状态", async (t) => {
   const cfg = makeCfg(t)
   const store = openStore(cfg.storeRoot, QUICK)
   const issueId = seedIssue(store)
@@ -161,38 +172,38 @@ test("draft_rule: 未批准 — 不产生 decision、不改候选状态", async 
   assert.equal(store.getIssue(issueId).status, "draft", "candidate status unchanged")
 })
 
-test("draft_rule: 不存在 / 跨项目 / 非 draft / 空正文 / 超 10 行 → 整体拒绝(无一落盘)", async (t) => {
+test("memory_draft_rule: 不存在 / 跨项目 / 非 draft / 空正文 / 超 10 行 → 整体拒绝(无一落盘)", async (t) => {
   const cfg = makeCfg(t)
   const store = openStore(cfg.storeRoot, QUICK)
   const issueId = seedIssue(store)
   const foreignIssueId = seedIssue(store, { projectId: PROJ_B, sessionId: "ses_root_b", messageId: "msg_b" })
 
-  expectReject(await executeDraftTool(cfg, { issueId: "ISS-nothere", body: APPROVE_BODY }), "does not exist in the store")
-  expectReject(await executeDraftTool(cfg, { issueId: foreignIssueId, body: APPROVE_BODY }), "another project")
+  expectReject(await executeDraftTool(cfg, { issueId: "ISS-nothere", body: APPROVE_BODY }), "does not exist in the store", { code: "MEMORY_ISSUE_NOT_FOUND" })
+  expectReject(await executeDraftTool(cfg, { issueId: foreignIssueId, body: APPROVE_BODY }), "another project", { code: "MEMORY_ISSUE_FOREIGN" })
   store.upsertIssue({ id: issueId, status: "approved" })
-  expectReject(await executeDraftTool(cfg, { issueId, body: APPROVE_BODY }), "approved")
-  expectReject(await executeDraftTool(cfg, { issueId, body: "   \n  " }), "body is empty")
+  expectReject(await executeDraftTool(cfg, { issueId, body: APPROVE_BODY }), "approved", { code: "MEMORY_NOT_DRAFTABLE" })
+  expectReject(await executeDraftTool(cfg, { issueId, body: "   \n  " }), "body is empty", { code: "MEMORY_INVALID_INPUT" })
   const long = Array.from({ length: 11 }, (_, i) => `line ${i + 1}`).join("\n")
-  expectReject(await executeDraftTool(cfg, { issueId, body: long }), "-line limit")
+  expectReject(await executeDraftTool(cfg, { issueId, body: long }), "-line limit", { code: "MEMORY_INVALID_INPUT" })
   assert.equal(Object.keys(readDrafts(cfg.storeRoot).drafts).length, 0, "nothing written on any rejection")
 })
 
-test("draft_rule: 子会话调用 → 拒绝 (fail-closed)", async (t) => {
+test("memory_draft_rule: 子会话调用 → 拒绝 (fail-closed)", async (t) => {
   const cfg = makeCfg(t)
   const store = openStore(cfg.storeRoot, QUICK)
   const issueId = seedIssue(store)
-  expectReject(await executeDraftTool(cfg, { issueId, body: APPROVE_BODY }, { sessionID: "ses_child_a" }), "can only be used in a root session")
+  expectReject(await executeDraftTool(cfg, { issueId, body: APPROVE_BODY }, { sessionID: "ses_child_a" }), "can only be used in a root session", { code: "MEMORY_SESSION_REJECTED", retry: "never" })
   assert.equal(Object.keys(readDrafts(cfg.storeRoot).drafts).length, 0)
 })
 
-test("draft_rule: store 缺失 → init 提示, 目录绝不自动创建", async (t) => {
+test("memory_draft_rule: store 缺失 → init 提示 + requires_user_confirmation, 目录绝不自动创建", async (t) => {
   const dir = withTmp(t, "mem1anostore-")
   const cfg = { enable: true, mock: false, dbPath: createHostDb(t), storeRoot: path.join(dir, "absent"), mockDir: null }
-  expectReject(await executeDraftTool(cfg, { issueId: "ISS-x", body: APPROVE_BODY }), "init")
+  expectReject(await executeDraftTool(cfg, { issueId: "ISS-x", body: APPROVE_BODY }), "init", { code: "MEMORY_STORE_MISSING", retry: "requires_user_confirmation" })
   assert.equal(fs.existsSync(cfg.storeRoot), false)
 })
 
-test("draft_rule mock: 校验照常、零生产写入、隔离回执", async (t) => {
+test("memory_draft_rule mock: 校验照常、零生产写入、隔离回执", async (t) => {
   const mockDir = withTmp(t, "mock1a-")
   const cfg = makeCfg(t, { mock: true, mockDir })
   const store = openStore(cfg.storeRoot, QUICK)
@@ -204,25 +215,25 @@ test("draft_rule mock: 校验照常、零生产写入、隔离回执", async (t)
   assert.equal(res.draftId, issueId)
   assert.equal(fs.existsSync(path.join(cfg.storeRoot, "digest", "drafts.json")), false, "mock must not write the production view")
   const receipts = fs.readFileSync(path.join(mockDir, "ses_root_a.jsonl"), "utf8").trim().split("\n")
-  assert.equal(JSON.parse(receipts[0]).tool, "draft_rule")
+  assert.equal(JSON.parse(receipts[0]).tool, "memory_draft_rule")
 })
 
-// ---------- prepare_publish ----------
+// ---------- memory_prepare_publish ----------
 
-test("prepare_publish: 未批准 → 拒绝(不存在 / draft 候选 id / 已停用)", async (t) => {
+test("memory_prepare_publish: 未批准 → 拒绝(不存在 / draft 候选 id / 已停用)", async (t) => {
   const cfg = makeCfg(t)
   const store = openStore(cfg.storeRoot, QUICK)
   const { file } = makeTarget(t, store)
   const approved = approveRule(store, { file })
   const issueId = seedIssue(store)
 
-  expectReject(await executePrepareTool(cfg, { ruleId: "RUL-nothere" }), "does not exist in the store")
-  expectReject(await executePrepareTool(cfg, { ruleId: issueId }), "does not exist in the store")
+  expectReject(await executePrepareTool(cfg, { ruleId: "RUL-nothere" }), "does not exist in the store", { code: "MEMORY_RULE_NOT_FOUND" })
+  expectReject(await executePrepareTool(cfg, { ruleId: issueId }), "does not exist in the store", { code: "MEMORY_RULE_NOT_FOUND" })
   store.recordDecision({ kind: "disable", ruleId: approved.rule.id })
-  expectReject(await executePrepareTool(cfg, { ruleId: approved.rule.id }), "is disabled")
+  expectReject(await executePrepareTool(cfg, { ruleId: approved.rule.id }), "is disabled", { code: "MEMORY_RULE_DISABLED" })
 })
 
-test("prepare_publish: 补丁文本与 CLI 生成为字节一致, 回执明示未应用", async (t) => {
+test("memory_prepare_publish: 补丁文本与 CLI 生成为字节一致, 回执明示未应用", async (t) => {
   const cfg = makeCfg(t)
   const store = openStore(cfg.storeRoot, QUICK)
   const { file } = makeTarget(t, store)
@@ -259,7 +270,7 @@ test("prepare_publish: 补丁文本与 CLI 生成为字节一致, 回执明示�
   assert.match(res.patches[0].patch, new RegExp(`supervisor-memory:rule:${rule.id}:v1`))
 })
 
-test("prepare_publish: 目标不满足 D8 → 拒绝(文件缺失 / 范围不一致 / marker 异常)", async (t) => {
+test("memory_prepare_publish: 目标不满足 D8 → 拒绝(文件缺失 / 范围不一致 / marker 异常)", async (t) => {
   const cfg = makeCfg(t)
   const store = openStore(cfg.storeRoot, QUICK)
   const { file } = makeTarget(t, store)
@@ -267,25 +278,25 @@ test("prepare_publish: 目标不满足 D8 → 拒绝(文件缺失 / 范围不一
 
   // file missing → never create new files
   fs.rmSync(file)
-  expectReject(await executePrepareTool(cfg, { ruleId: rule.id }), "does not exist")
+  expectReject(await executePrepareTool(cfg, { ruleId: rule.id }), "does not exist", { code: "MEMORY_TARGET_REJECTED", retry: "requires_user_confirmation" })
   fs.writeFileSync(file, "# agents\n", { mode: 0o600 })
 
   // scope mismatch: a rule approved for proj_b cannot target proj_a's file
   const foreign = approveRule(store, { file, scope: { kind: "project", projectId: PROJ_B } })
-  expectReject(await executePrepareTool(cfg, { ruleId: foreign.rule.id }), "inconsistent with the rule's approved scope")
+  expectReject(await executePrepareTool(cfg, { ruleId: foreign.rule.id }), "inconsistent with the rule's approved scope", { code: "MEMORY_TARGET_REJECTED" })
 
   // marker anomaly in target → fail-closed, human review (the patch builder
   // raises in English; the tool wraps it verbatim under 补丁生成失败)
   fs.writeFileSync(file, "<!-- supervisor-memory:rule:orphan:v1 -->\n", { mode: 0o600 })
-  expectReject(await executePrepareTool(cfg, { ruleId: rule.id }), "fail-closed")
+  expectReject(await executePrepareTool(cfg, { ruleId: rule.id }), "fail-closed", { code: "MEMORY_TARGET_REJECTED" })
 })
 
-test("prepare_publish: 目录未确认 → 拒绝(目录确认是人的显式操作)", async (t) => {
+test("memory_prepare_publish: 目录未确认 → 拒绝(目录确认是人的显式操作)", async (t) => {
   const cfg = makeCfg(t)
   const store = openStore(cfg.storeRoot, QUICK)
   const { file } = makeTarget(t, store, { confirm: false })
   const { rule } = approveRule(store, { file })
-  expectReject(await executePrepareTool(cfg, { ruleId: rule.id }), "unconfirmed")
+  expectReject(await executePrepareTool(cfg, { ruleId: rule.id }), "unconfirmed", { code: "MEMORY_TARGET_REJECTED", retry: "requires_user_confirmation" })
 })
 
 // ---------- memory_status ----------
@@ -343,7 +354,7 @@ test("描述 lint: 四工具描述无步骤指导/句式处方, schema 无 confi
   const tools = buildMemoryTools({ cfg: { enable: true, mock: false, dbPath: null, storeRoot: null, mockDir: null } })
   assert.deepEqual(
     tools.map((tl) => tl.name),
-    ["report_correction", "draft_rule", "prepare_publish", "memory_status"],
+    ["memory_record_correction", "memory_draft_rule", "memory_prepare_publish", "memory_status"],
   )
   const LINT_RE = /首先|然后|步骤|依次|请先|句式|祈使|建议你|你应该/
   for (const tool of tools) {
@@ -357,7 +368,7 @@ test("描述 lint: 四工具描述无步骤指导/句式处方, schema 无 confi
   assert.equal(tools[0].description, FROZEN_TOOL_DESCRIPTION)
 })
 
-test("注册: 新三工具与 report_correction 同机制注册(同 ctx, 一次 reload)", async (t) => {
+test("注册: 新三工具与 memory_record_correction 同机制注册(同 ctx, 一次 reload)", async (t) => {
   const dbPath = createHostDb(t)
   const storeRoot = makeStoreRoot(t)
   const state = { added: [], reloaded: 0 }
@@ -379,7 +390,7 @@ test("注册: 新三工具与 report_correction 同机制注册(同 ctx, 一次 
   const res = await registerMemoryTool(ctx)
   assert.equal(res.registered, true)
   assert.equal(state.reloaded, 1)
-  assert.deepEqual(state.added.map((tl) => tl.name), ["report_correction", "draft_rule", "prepare_publish", "memory_status"])
+  assert.deepEqual(state.added.map((tl) => tl.name), ["memory_record_correction", "memory_draft_rule", "memory_prepare_publish", "memory_status"])
   // dual-form receipt convention holds for the new tools too
   const status = state.added.find((tl) => tl.name === "memory_status")
   const out = await status.execute({}, CTX_A)

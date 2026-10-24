@@ -232,7 +232,7 @@ export function formatPatch({ targetPath, why, scopePromise, tracked, patch }) {
 /**
  * Shared single-target patch composition (generate + format) used by BOTH the
  * CLI approve printer (runApprove, byte-for-byte unchanged output) and the
- * prepare_publish tool face (v6.0 Part III step 1a). Pure: takes and returns
+ * memory_prepare_publish tool face (v6.0 Part III step 1a). Pure: takes and returns
  * strings, zero filesystem access. Throws PatchError from generatePatch on
  * marker anomalies, oversize, or a target that no longer matches the decision
  * history.

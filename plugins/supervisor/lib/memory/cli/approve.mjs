@@ -349,7 +349,7 @@ export async function runApprove(ctx, id) {
 
   // Regenerate with the real rule id (new rules got one just now), then print.
   // formatRulePatch = the shared generate+format composition (step-1a: the
-  // prepare_publish tool uses the exact same two calls, so tool and CLI patch
+  // memory_prepare_publish tool uses the exact same two calls, so tool and CLI patch
   // text are byte-identical by construction).
   const patches = targetContexts.map((tc) =>
     formatRulePatch({

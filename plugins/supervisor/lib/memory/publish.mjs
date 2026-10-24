@@ -1,46 +1,47 @@
-// prepare_publish — model tool face, v6.0 design Part III step 1a (§III.1
-// row 3; named prepare_publish precisely because it does NOT publish: zero
-// file writes). For an APPROVED rule (status active + a matching approve
-// decision in the store) it regenerates the apply-patch text with the exact
-// same shared composition the CLI approve printer uses (cli/patch.mjs
-// formatRulePatch → generatePatch + formatPatch), so tool output is
-// byte-identical to what a fresh CLI approval prints for the same object.
+// memory_prepare_publish (named prepare_publish precisely because it does
+// NOT publish: zero file writes; renamed in the Oracle R33 tool-face phase 1)
+// — model tool face, v6.0 design Part III step 1a (§III.1 row 3). For an
+// APPROVED rule (status active + a matching approve decision in the store) it
+// regenerates the apply-patch text with the exact same shared composition the
+// CLI approve printer uses (cli/patch.mjs formatRulePatch → generatePatch +
+// formatPatch), so tool output is byte-identical to what a fresh CLI approval
+// prints for the same object.
 //
 // Boundaries (III.1): the receipt always states the patch is NOT applied;
 // the tool performs NO publish registration — the D9 in-place confirmation
 // stays a read-only check of the human CLI digest. D8 target conditions are
 // re-verified from current state (file exists, directory confirmed, target
 // within the approved scope); any drift → reject with the reason (target
-// changed → human review, fail-closed).
+// changed → human review, fail-closed). Every failure returns the structured
+// envelope (R33): {ok:false, code, message, nextTool, retry}.
 //
 // No confirmed/approved parameter exists (III.1: confirmation is a host
 // event, never a model-supplied argument).
-// Description lint (III.0): object semantics / input / effect / failure
-// statements only. Amendment trail: initial text 2026-10-23; same day,
-// translated to English (R26 three-part format, user request m01908) —
-// semantics unchanged, no recorded corrections.
+// Description lint (III.0, R33 form): one or two sentences — usage + the key
+// "not what"; parameter detail lives in the schema. Amendment trail: initial
+// text 2026-10-23; same day, translated to English (R26 three-part format,
+// user request m01908); R33 phase 1 slimmed it — semantics unchanged, no
+// recorded corrections.
 import fs from "node:fs"
 import os from "node:os"
 
 import { formatRulePatch, PatchError } from "./cli/patch.mjs"
 import { candidateTargets, whyTarget } from "./cli/targets.mjs"
 import { describeScope } from "./cli/approve.mjs"
-import { gateSession, openStoreFor, storeOpenError } from "./common.mjs"
+import { gateSession, mapStoreError, memoryError, openStoreFor, sessionRejected, storeOpenError } from "./common.mjs"
 
-export const PREPARE_PUBLISH_TOOL_NAME = "prepare_publish"
+export const PREPARE_PUBLISH_TOOL_NAME = "memory_prepare_publish"
 
 export const TOOL_DESCRIPTION =
-  "Generates the apply-patch text for one approved rule; zero writes to target files. " +
-  "Input: ruleId (must be approved, with a matching approval decision record). " +
-  "Effect: returns the full patch block and target path; the patch is NOT applied — applying requires a human (or human-authorized agent) to paste/write it; the tool performs no publish registration, and in-place confirmation is the human-review CLI digest read-only check. " +
-  "Failure: unknown, unapproved, or disabled rule; no registered targets; or a target failing publish conditions (missing file, unconfirmed directory, outside the approved scope, changed target content) rejects with the reason."
+  "Generate an application patch for a rule's approved static targets. Returns patch text without modifying files."
 
 const INPUT_SCHEMA = {
   type: "object",
   properties: {
     ruleId: {
       type: "string",
-      description: "Rule ID (RUL-…); must be approved with a matching approval decision record",
+      description:
+        "Required. Rule ID (RUL-…); must be approved (active) with a matching approval decision record.",
     },
   },
   required: ["ruleId"],
@@ -60,12 +61,12 @@ export function buildPreparePublishTool({ cfg }) {
   }
 }
 
-/** Never throws; every failure path returns {ok:false, error}. */
+/** Never throws; every failure path returns the structured envelope (R33). */
 export async function executePreparePublish(rawArgs, context, { cfg }) {
   try {
     return await runPreparePublish(rawArgs, context, { cfg })
   } catch (err) {
-    return { ok: false, error: `prepare_publish internal error: ${err?.message ?? err}` }
+    return memoryError("INTERNAL", `memory_prepare_publish internal error: ${err?.message ?? err} — report it; do not retry unchanged`)
   }
 }
 
@@ -94,37 +95,47 @@ async function runPreparePublish(rawArgs, context, { cfg }) {
   const args = rawArgs && typeof rawArgs === "object" ? rawArgs : {}
 
   const gate = gateSession(context, cfg)
-  if (!gate.ok) return { ok: false, error: gate.error }
+  if (!gate.ok) return sessionRejected(gate.error)
 
   const ruleId = typeof args.ruleId === "string" ? args.ruleId.trim() : ""
   if (ruleId.length === 0) {
-    return { ok: false, error: "ruleId must be a rule ID string (RUL-…)" }
+    return memoryError("INVALID_INPUT", "ruleId must be a rule ID string (RUL-…)")
   }
 
   let store
   try {
     store = openStoreFor(cfg)
   } catch (err) {
-    return { ok: false, error: storeOpenError(err) }
+    return storeOpenError(err)
   }
 
-  const rule = store.getRule(ruleId) // throws (fail-closed) on damaged stores
+  let rule
+  try {
+    rule = store.getRule(ruleId) // throws (fail-closed) on damaged stores
+  } catch (err) {
+    return mapStoreError(err)
+  }
   if (!rule) {
-    return { ok: false, error: `rejected: rule ${ruleId} does not exist in the store` }
+    return memoryError("RULE_NOT_FOUND", `rule ${ruleId} does not exist in the store — check the ID via the supervisor-memory CLI digest`)
   }
   if (rule.status === "disabled") {
-    return { ok: false, error: `rejected: rule ${ruleId} is disabled; re-enabling requires a fresh approval and never goes through this tool` }
+    return memoryError("RULE_DISABLED", `rule ${ruleId} is disabled; re-enabling requires a fresh approval and never goes through this tool`)
   }
   if (rule.status !== "active" || !rule.approvalRef) {
-    return { ok: false, error: `rejected: rule ${ruleId} is not in an approved state (current ${rule.status})` }
+    return memoryError("RULE_NOT_APPROVED", `rule ${ruleId} is not in an approved state (current ${rule.status}) — approve it first via the human CLI flow`)
   }
   // listDecisions({ruleId}) cannot find a v1 rule's approving decision
   // (first approvals carry decision.ruleId = null — store semantics), so the
   // current decision is matched via approvalRef over all approve decisions.
-  const approves = store.listDecisions({ kind: "approve" })
+  let approves
+  try {
+    approves = store.listDecisions({ kind: "approve" })
+  } catch (err) {
+    return mapStoreError(err)
+  }
   const current = approves.find((d) => d.id === rule.approvalRef?.decisionId)
   if (!current) {
-    return { ok: false, error: `rejected: no approval decision record matching the current version of rule ${ruleId}` }
+    return memoryError("RULE_NOT_APPROVED", `no approval decision record matches the current version of rule ${ruleId} — re-approval is required`)
   }
   const reApprovals = approves.filter((d) => d.ruleId === ruleId)
   const mint = approves
@@ -133,35 +144,40 @@ async function runPreparePublish(rawArgs, context, { cfg }) {
 
   const targets = Array.isArray(rule.targets) ? rule.targets : []
   if (targets.length === 0) {
-    return { ok: false, error: `rejected: rule ${ruleId} has no registered targets (never published); targets are fixed during manual approval (approve)` }
+    return memoryError("RULE_NO_TARGETS", `rule ${ruleId} has no registered targets (never published); targets are fixed during manual approval (approve)`)
   }
 
   // D8 re-verification from CURRENT state: every registered target must
   // still be an in-scope candidate that exists, with a confirmed directory.
-  const candidates = candidateTargets({
-    scope: rule.scope,
-    projects: store.listProjects(),
-    cwd: null, // the tool face never widens scope via an unregistered cwd
-    home: os.homedir(),
-  })
+  let candidates
+  try {
+    candidates = candidateTargets({
+      scope: rule.scope,
+      projects: store.listProjects(),
+      cwd: null, // the tool face never widens scope via an unregistered cwd
+      home: os.homedir(),
+    })
+  } catch (err) {
+    return mapStoreError(err)
+  }
   const previous = previousVersionOf(rule, reApprovals, mint)
   const patches = []
   for (const t of targets) {
     const c = candidates.find((x) => x.path === t)
     if (!c) {
-      return { ok: false, error: `rejected: target ${t} is inconsistent with the rule's approved scope — send for human review, no patch generated` }
+      return memoryError("TARGET_REJECTED", `target ${t} is inconsistent with the rule's approved scope — send for human review, no patch generated`, { retry: "requires_user_confirmation" })
     }
     if (!c.exists) {
-      return { ok: false, error: `rejected: target file does not exist — new files are never created (${t})` }
+      return memoryError("TARGET_REJECTED", `target file does not exist — new files are never created (${t})`, { retry: "requires_user_confirmation" })
     }
     if (c.confirmedDir === false) {
-      return { ok: false, error: `rejected: target directory unconfirmed (${c.directory}) — directory confirmation is an explicit human action (projects.json)` }
+      return memoryError("TARGET_REJECTED", `target directory unconfirmed (${c.directory}) — directory confirmation is an explicit human action (projects.json)`, { retry: "requires_user_confirmation" })
     }
     let content
     try {
       content = fs.readFileSync(t, "utf8")
     } catch {
-      return { ok: false, error: `rejected: target ${t} unreadable — target changed? send for human review (never inferred as user deletion)` }
+      return memoryError("TARGET_REJECTED", `target ${t} unreadable — target changed? send for human review (never inferred as user deletion)`, { retry: "requires_user_confirmation" })
     }
     try {
       patches.push({
@@ -180,7 +196,7 @@ async function runPreparePublish(rawArgs, context, { cfg }) {
       })
     } catch (err) {
       const detail = err instanceof PatchError ? err.message : String(err?.message ?? err)
-      return { ok: false, error: `rejected: patch generation failed for target ${t} — ${detail}` }
+      return memoryError("TARGET_REJECTED", `patch generation failed for target ${t} — ${detail}`, { retry: "requires_user_confirmation" })
     }
   }
 
