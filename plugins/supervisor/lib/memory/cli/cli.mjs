@@ -25,6 +25,7 @@ import { readView, writeView, readDrafts, saveDraft, recordDraftFailure } from "
 import { draftEnv, draftOnce } from "./draft.mjs"
 import { runApprove } from "./approve.mjs"
 import { runDeliveryEnable, runDeliveryDisable, printRideSentinel } from "./delivery.mjs"
+import { submitDecision } from "../approval-service.mjs"
 import { defaultLogPath } from "../../config.mjs"
 
 // ---------- IO ----------
@@ -418,7 +419,10 @@ export function runDisable(ctx, ruleId) {
       io.print(`rejected: rule ${ruleId} currently has status ${rule.status}; only active rules can be disabled.`)
       return 1
     }
-    store.recordDecision({ kind: "disable", ruleId })
+    // Stop-class: the explicit CLI invocation is the admin request — no second
+    // confirmation. Routed through the shared approval critical section so a
+    // concurrent approve/stop in another process cannot interleave.
+    submitDecision({ store, kind: "disable", ruleId })
     io.print(`disabled ${ruleId} (a human decision; store status disabled, targets preserved).`)
     io.print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
     io.print("!! disabled-in-store ≠ residue withdrawn from files — if the patch was applied manually, the managed segment is still in the target file; remove it by hand with the removal patch below.")

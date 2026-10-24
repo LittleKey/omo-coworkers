@@ -560,18 +560,36 @@ test("T1 memory.enable off (default) → not registered, tool surface untouched"
   }
 })
 
-test("T1 memory.enable on → the four-tool face registered, each codemode:false, one reload", async (t) => {
+test("T1 memory.enable on → the eight-tool face registered, each codemode:false, one reload", async (t) => {
   const dbPath = createHostDb(t)
   const { ctx, state } = makeCtx({ memory: { enable: true, dbPath } })
   const res = await registerMemoryTool(ctx)
   assert.equal(res.registered, true)
-  assert.deepEqual(res.tools, ["memory_record_correction", "memory_draft_rule", "memory_prepare_publish", "memory_status"])
-  assert.equal(state.transformCalls, 4)
+  assert.deepEqual(res.tools, [
+    "memory_record_correction",
+    "memory_draft_rule",
+    "memory_prepare_publish",
+    "memory_status",
+    "memory_approve_rule",
+    "memory_enable_delivery",
+    "memory_disable_delivery",
+    "memory_disable_rule",
+  ])
+  assert.equal(state.transformCalls, 8)
   assert.equal(state.reloaded, 1)
-  assert.equal(state.added.length, 4)
+  assert.equal(state.added.length, 8)
   assert.deepEqual(
     state.added.map((tl) => tl.name),
-    ["memory_record_correction", "memory_draft_rule", "memory_prepare_publish", "memory_status"],
+    [
+      "memory_record_correction",
+      "memory_draft_rule",
+      "memory_prepare_publish",
+      "memory_status",
+      "memory_approve_rule",
+      "memory_enable_delivery",
+      "memory_disable_delivery",
+      "memory_disable_rule",
+    ],
   )
   for (const tool of state.added) {
     assert.deepEqual(tool.options, { codemode: false })
@@ -586,7 +604,7 @@ test("T1 resolveMemoryOptions: only ===true enables; unknown keys ignored", () =
   assert.equal(resolveMemoryOptions(undefined).enable, false)
   assert.equal(resolveMemoryOptions({ memory: { enable: true, nonsense: 1 } }).enable, true)
   const cfg = resolveMemoryOptions({ memory: { enable: true, mock: true, dbPath: "/d", storeRoot: "/s", mockDir: "/m" } })
-  assert.deepEqual(cfg, { enable: true, mock: true, dbPath: "/d", storeRoot: "/s", mockDir: "/m", delivery: "off" })
+  assert.deepEqual(cfg, { enable: true, mock: true, dbPath: "/d", storeRoot: "/s", mockDir: "/m", delivery: "off", confirmTimeoutMin: 10, confirm: null })
   assert.equal(resolveMemoryOptions({ memory: { delivery: "inject" } }).delivery, "inject")
   assert.equal(resolveMemoryOptions({ memory: { delivery: "shadow" } }).delivery, "shadow")
   assert.equal(resolveMemoryOptions({ memory: { delivery: "nonsense" } }).delivery, "off")

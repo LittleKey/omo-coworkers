@@ -582,11 +582,20 @@ test("memory_status: id=详情 草稿状态反映 drafts.json; 默认视图(无 
 
 // ---------- tool face shape (III.0 lint + registration) ----------
 
-test("描述 lint: 四工具描述无步骤指导/句式处方, schema 无 confirmed/approved 类参数, 均 codemode:false", () => {
+test("描述 lint: 工具描述无步骤指导/句式处方, schema 无 confirmed/approved 类参数, 均 codemode:false", () => {
   const tools = buildMemoryTools({ cfg: { enable: true, mock: false, dbPath: null, storeRoot: null, mockDir: null } })
   assert.deepEqual(
     tools.map((tl) => tl.name),
-    ["memory_record_correction", "memory_draft_rule", "memory_prepare_publish", "memory_status"],
+    [
+      "memory_record_correction",
+      "memory_draft_rule",
+      "memory_prepare_publish",
+      "memory_status",
+      "memory_approve_rule",
+      "memory_enable_delivery",
+      "memory_disable_delivery",
+      "memory_disable_rule",
+    ],
   )
   const LINT_RE = /首先|然后|步骤|依次|请先|句式|祈使|建议你|你应该/
   for (const tool of tools) {
@@ -594,6 +603,10 @@ test("描述 lint: 四工具描述无步骤指导/句式处方, schema 无 confi
     assert.equal(LINT_RE.test(tool.description), false, `description of ${tool.name} must stay lint-clean: ${tool.description}`)
     assert.deepEqual(tool.options, { codemode: false }, `${tool.name} must set codemode:false`)
     for (const p of Object.keys(tool.input?.properties ?? {})) {
+      // confirmTimeoutMin is a WAIT DURATION, never an authorization artifact;
+      // everything else matching the authorization vocabulary is forbidden —
+      // the model can never provide confirmation state (R33 §②).
+      if (p === "confirmTimeoutMin") continue
       assert.ok(!/confirm|approv/i.test(p), `${tool.name}.${p} must not be an authorization parameter`)
     }
   }
@@ -622,7 +635,16 @@ test("注册: 新三工具与 memory_record_correction 同机制注册(同 ctx, 
   const res = await registerMemoryTool(ctx)
   assert.equal(res.registered, true)
   assert.equal(state.reloaded, 1)
-  assert.deepEqual(state.added.map((tl) => tl.name), ["memory_record_correction", "memory_draft_rule", "memory_prepare_publish", "memory_status"])
+  assert.deepEqual(state.added.map((tl) => tl.name), [
+    "memory_record_correction",
+    "memory_draft_rule",
+    "memory_prepare_publish",
+    "memory_status",
+    "memory_approve_rule",
+    "memory_enable_delivery",
+    "memory_disable_delivery",
+    "memory_disable_rule",
+  ])
   // dual-form receipt convention holds for the new tools too
   const status = state.added.find((tl) => tl.name === "memory_status")
   const out = await status.execute({}, CTX_A)

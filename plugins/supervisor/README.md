@@ -247,6 +247,10 @@ the same object serialized into `content`.
 | `memory_draft_rule` | `issueId` (required), `body` (required, ≤ 10 lines) | Writes a rule-text draft for one `draft` candidate into the shared `digest/drafts.json` view (same writer the CLI uses). Draft-state only — no decision, no authorization. |
 | `memory_prepare_publish` | `ruleId` (required), `mode` (optional: `"apply"` default \| `"remove"`) | For an approved rule, regenerates patch text with the exact composition the CLI printers use (byte-identical): `mode: "apply"` (default) produces the apply-patch for each registered target; `mode: "remove"` produces one removal patch per managed segment already present in a target (`supervisor-memory disable` byte-identical), reporting segment-less targets as `skipped` instead of failing. Both modes re-verify the D8 target conditions from current state and stay zero-file-write with no publish/decision registration — applying or removing remains a human action. system-ride rules (no static targets) reject with `MEMORY_RULE_NO_TARGETS` in both modes. |
 | `memory_status` | — (optional `id`: a `RUL-…` or `ISS-…` ID) | Read-only view of the caller's scope: the project's rules (id / one-line summary / status / version, plus user-global), pending candidate and event counts, and the human review entry point (`supervisor-memory digest`). Pending counts and the `pending.items` list (≤ 20, newest first: `id`, one-line excerpt, `firstSeenTs`, `draftStatus`) are filtered to the caller's project — other projects' candidates never appear; user-global rules are visible from every project. With `id`, returns a `details` object: a rule's full body / scope / channel / version / status / agents, or a candidate's evidence excerpts / sources / draft status. Out-of-scope or unknown ids return `MEMORY_NOT_FOUND` (existence is never distinguished from visibility); a non-`RUL-`/`ISS-` id returns `MEMORY_INVALID_INPUT`. |
+| `memory_approve_rule` | exactly one of `issueId` / `ruleId`; `body`, `scope`, `channel` (required); `targets`, `agents`, `reviewDate`, `confirmTimeoutMin` (channel-dependent) | Creates a host confirmation form bound to the full object display (Bridge A; the model can never pass confirmation artifacts) and blocks on the user's single choice. On `confirm`, submits through the shared critical section (display-time snapshot re-checked under a cross-process lock) and records the approve decision — new `RUL-…` or a new version. Never enables delivery, never writes files. Confirmation artifacts are unforgeable: cancel / expiry / form loss / store change record nothing. See the approval-tools section below. |
+| `memory_enable_delivery` | `ruleId` (required), `confirmTimeoutMin` (optional) | Separate delivery authorization for an active system-ride rule: displays the full body plus the binding quadruple (ruleId / version / bodyHash / channel) and the persistent-across-sessions scope, then records `delivery-enable` under the same critical section. Duplicate → `alreadyEnabled` receipt, nothing recorded. A disabled rule refuses — re-enabling requires a fresh approval of a new version (never a delivery switch, never reuse of the old authorization). |
+| `memory_disable_delivery` | `ruleId` (required) | Stop class — no second confirmation under an explicit admin request (identity/scope gates kept). Records `delivery-disable`; the rule stops riding on the next evaluation. Wording never claims history or already-compressed text is erased. |
+| `memory_disable_rule` | `ruleId` (required) | Stop class — records `disable` (status → `disabled`, targets preserved). `disabled-in-store ≠ residue withdrawn from files`; manually applied text stays until a human removes it. |
 
 Tool failures use one structured envelope (Oracle R33): `{ ok: false, code:
 "MEMORY_<STABLE_CODE>", message, nextTool, retry }` — `message` is one
@@ -259,6 +263,12 @@ phase, and `retry` is one of `requires_user_confirmation` / `safe` /
 directories and removal-patch generation failures) and `MEMORY_NOT_FOUND`
 (per-ID `memory_status` lookups outside the caller's scope — visibility is
 never distinguished from existence);
+the approval face adds `MEMORY_CONFIRMATION_STALE`, `MEMORY_CONFIRMATION_CANCELLED`,
+`MEMORY_CONFIRMATION_EXPIRED`, `MEMORY_CONFIRMATION_UNAVAILABLE`,
+`MEMORY_CONFIRMATION_REPLAY`, `MEMORY_APPROVAL_BUSY`, `MEMORY_RULE_DISABLED`,
+`MEMORY_RULE_NOT_ACTIVE`, `MEMORY_CHANNEL_MISMATCH`, `MEMORY_CHANNEL_SWITCH`,
+`MEMORY_SCOPE_RIDE_MISMATCH`, `MEMORY_AGENTS_SCOPE_UNHONORABLE`,
+`MEMORY_TARGET_INVALID`, `MEMORY_ISSUE_FOREIGN` and `MEMORY_FORM_ERROR`;
 store failures pass through the store's own code family. Success receipts
 keep their existing shape (`ok: true, …`).
 
@@ -310,10 +320,63 @@ Withdrawal semantics: `delivery-disable` only stops future appending — rule
 text already present in history answers or compressed summaries does not
 disappear.
 
+### Approval & delivery tools (Bridge A, `memory.confirmTimeoutMin`)
+
+Four tools registered behind the same `memory.enable` switch:
+`memory_approve_rule` (approve a draft issue as a new rule, or re-approve a
+rule as a new version — it never enables delivery and writes no files),
+`memory_enable_delivery` (separate authorization binding the quadruple
+ruleId / version / bodyHash / channel; the display states that system-ride is
+persistent across sessions, not just this session), and the stop class
+`memory_disable_delivery` / `memory_disable_rule`, which perform no second
+confirmation under an explicit admin request (identity/scope gates kept) and
+never claim that history or already-applied residue is erased.
+
+Confirmation is Bridge A only: the plugin creates a host form (single-choice
+`confirm` / `cancel`, free text disabled) carrying the full object display —
+body, scope, targets/agents, channel, object hash, revocation boundary and
+the real deadline — then blocks on the answer. The model can never supply
+confirmation artifacts: `confirmed`/`answer`/`hash`/`decisionId`-style
+arguments are rejected with `MEMORY_INVALID_INPUT` before any form exists.
+`execute` blocks while waiting (probe-verified host behavior).
+
+Timing and invalidation: the deadline defaults to 10 minutes
+(`memory.confirmTimeoutMin`, clamped 1–30) and is checked *before* each poll
+and *again* before an answer is accepted, so a late answer is never consumed;
+expiry deletes the form and records nothing (`MEMORY_CONFIRMATION_EXPIRED` —
+a failed delete still refuses late answers). Cancel/abort →
+`MEMORY_CONFIRMATION_CANCELLED`; form loss or a store change under the open
+form → `MEMORY_CONFIRMATION_STALE`. Every retry is a brand-new decision
+behind a brand-new form; one formID feeds at most one decision
+(consume-once; reuse → `MEMORY_CONFIRMATION_REPLAY`). With no reachable host
+form API the tool refuses with `MEMORY_CONFIRMATION_UNAVAILABLE` and points
+at the CLI fallback.
+
+Critical section (bug ① fix): `lib/memory/approval-service.mjs` serializes
+the final state re-check plus `recordDecision` behind a cross-process mutex
+(`<storeRoot>/approval.lock`, same recovery policy shape as the store lock,
+30 s stale default). No lock is held while waiting for the user. Both the
+tool face and the CLI (`approve`, `delivery-enable`, `delivery-disable`,
+`disable`) submit through this one path, so a concurrent approval and stop
+can never interleave a stale record; a busy section is waited on (10 s
+default) and then refused with `MEMORY_APPROVAL_BUSY`. Stop-class CLI
+invocations record without a display snapshot; snapshot-guarded flows must
+always pass one.
+
+Every attempt is appended to `<storeRoot>/approval-audit.jsonl` (outcome,
+tool, sessionID, ruleId/issueId, formID, objectHash, snapshotHash, deadline
+timestamp, decisionId when recorded). `test/approval.test.mjs` covers the
+adjudication checklist against a local mock of the form lifecycle: forged
+arguments, gates, replay, fork/loss, expiry (including the late-answer race),
+staleness (issue status, concurrent re-approve, disable), cross-process
+mutual exclusion and serialization, exactly-once, post-submit failure
+carrying the decisionId, approve ≠ delivery ≠ file writes, re-approval
+invalidating delivery, and stop wording.
+
 ### Tests
 
 ```sh
-node --test test/unit.test.mjs test/v2-context.test.mjs test/store.test.mjs test/cli.test.mjs test/tool.test.mjs test/step1a.test.mjs
+node --test test/unit.test.mjs test/v2-context.test.mjs test/store.test.mjs test/cli.test.mjs test/tool.test.mjs test/step1a.test.mjs test/ride.test.mjs test/approval.test.mjs
 ```
 
 `test/store.test.mjs` covers the full T4 fault matrix (missing/corrupt/
@@ -341,7 +404,16 @@ face: every matching gate negative, budget whole-item skip, fixed order,
 marker idempotence, shape-guard isolation, delivery quadruple binding and
 re-approval reset (against a real store), shadow log-only behavior, the CLI
 delivery-enable/disable TTY flows, the digest sentinel, and an
-enable → ride → disable → stop → re-enable cycle.
+enable → ride → disable → stop → re-enable cycle. `test/approval.test.mjs`
+covers the stage-3 approval face against a local mock of the Bridge A form
+lifecycle: forged confirmation arguments, session/issue/rule gates, replay,
+fork (form loss), expiry including the late-answer race, staleness (issue
+status change, concurrent re-approve, disable under an open form),
+cross-process mutex + serialization of the shared critical section,
+exactly-once, post-submit failure carrying the decisionId, approve ≠ delivery
+≠ AGENTS.md writes, re-approval invalidating delivery, the stop-class
+no-second-confirmation wording, and the CLI `delivery-disable` confirm-free
+contract.
 
 ## Tests
 

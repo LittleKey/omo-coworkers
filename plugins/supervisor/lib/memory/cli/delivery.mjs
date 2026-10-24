@@ -16,6 +16,7 @@ import fs from "node:fs"
 
 import { canonicalJson, sha256Hex } from "../store.mjs"
 import { deriveDeliveryState, rideBodyHash, RIDE_CHANNEL } from "../ride.mjs"
+import { describeSubmitError, snapshotState, submitDecision } from "../approval-service.mjs"
 import { humanStoreError } from "./cli.mjs" // function decl — cycle-safe (cli.mjs imports this module for dispatch)
 
 function sha16(hex) {
@@ -68,6 +69,11 @@ export async function runDeliveryEnable(ctx, ruleId) {
 
     const bodyHash = rideBodyHash(rule.body)
     const object = { channel: RIDE_CHANNEL, version: rule.version, bodyHash }
+    // Stage-2 snapshot for the approval critical section (bug ① fix): the
+    // record is submitted through the shared service layer, which re-checks
+    // this snapshot inside the cross-process lock — a concurrent
+    // approve/stop/version bump between confirm and record cannot interleave.
+    const before = snapshotState(store, { ruleId: rule.id })
 
     // ---- stage 1: what will happen ----
     io.print("────────────── delivery-enable (stage 1/3) ──────────────")
@@ -94,7 +100,29 @@ export async function runDeliveryEnable(ctx, ruleId) {
       io.print("cancelled — no decision recorded.")
       return 1
     }
-    const { decision } = store.recordDecision({ kind: "delivery-enable", ruleId: rule.id, object })
+    let recorded
+    try {
+      recorded = submitDecision({
+        store,
+        kind: "delivery-enable",
+        ruleId: rule.id,
+        object,
+        snapshot: before,
+        expectRule: (r) =>
+          r.status === "active" && r.channel === RIDE_CHANNEL && r.version === rule.version
+            ? null
+            : `rule ${rule.id} changed under the confirmation (status/version/channel no longer match)`,
+      })
+    } catch (e) {
+      const msg = describeSubmitError(e)
+      if (msg) {
+        io.print(msg)
+        io.print("no decision was recorded this time; re-run delivery-enable from stage 1.")
+        return 1
+      }
+      throw e
+    }
+    const { decision } = recorded
     io.print(`delivery-enabled: ${decision.id} — rule ${rule.id} v${rule.version} will ride the system prompt of matching sessions (root sessions, project-scoped, agent-matched; budget 1200 chars per request).`)
     return 0
   } catch (e) {
@@ -103,22 +131,24 @@ export async function runDeliveryEnable(ctx, ruleId) {
   }
 }
 
-/** delivery-disable <RUL-…>: record the stop-appending decision. */
+/** delivery-disable <RUL-…>: record the stop-appending decision.
+ * Stop-class: an explicit CLI invocation IS the admin request, so there is no
+ * second confirmation (bug ③ fix) — identity (TTY CLI) and scope validation
+ * stay. Routed through the shared approval critical section. */
 export async function runDeliveryDisable(ctx, ruleId) {
   const { store, io } = ctx
   try {
     store.requireHealthy() // D5
     const rule = loadRuleOrRefuse(ctx, ruleId)
     if (!rule) return 1
-    const state = deriveDeliveryState(rule, store.listDecisions())
 
-    io.print(`rule: ${rule.id} v${rule.version} (channel ${rule.channel ?? "unset"}) — delivery state: ${state.enabled ? "enabled" : `disabled (${state.reason})`}`)
+    io.print(`rule: ${rule.id} v${rule.version} (channel ${rule.channel ?? "unset"})`)
     io.print("effect: matching sessions stop receiving this rule in the system prompt. This only stops appending — rule text already present in history answers or compressed summaries does not disappear.")
-    if (!(await io.confirm("Record delivery-disable?"))) {
-      io.print("cancelled — no decision recorded.")
-      return 1
-    }
-    const { decision } = store.recordDecision({ kind: "delivery-disable", ruleId: rule.id })
+    const { decision } = submitDecision({
+      store,
+      kind: "delivery-disable",
+      ruleId: rule.id,
+    })
     io.print(`delivery-disabled: ${decision.id} — rule ${rule.id} will stop riding on the next model request evaluation.`)
     return 0
   } catch (e) {

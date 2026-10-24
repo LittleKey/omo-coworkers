@@ -17,28 +17,20 @@ import { canonicalJson, sha256Hex } from "../store.mjs"
 import { candidateTargets, whyTarget } from "./targets.mjs"
 import { formatRulePatch, generatePatch, countBodyLines, BODY_MAX_LINES } from "./patch.mjs"
 import { readDrafts } from "./views.mjs"
+import { describeSubmitError, snapshotState, sameState, submitDecision } from "../approval-service.mjs"
 
-/** Store-state fingerprint captured at stage 2 and re-verified at stage 3 (T3). */
+/**
+ * Store-state fingerprint captured at stage 2 and re-verified at stage 3 (T3)
+ * and again inside the approval critical section (bug ① TOCTOU fix). Delegates
+ * to the shared service-layer snapshot so CLI and tools bind confirmations to
+ * the exact same state shape.
+ */
 export function fingerprint(store, ruleId, issueId) {
-  const decisions = store.listDecisions()
-  const rule = ruleId ? store.getRule(ruleId) : null
-  const issue = issueId ? store.getIssue(issueId) : null
-  return {
-    decisionsTotal: decisions.length,
-    rule: rule
-      ? {
-          version: rule.version,
-          status: rule.status,
-          updatedAtTs: rule.updatedAtTs,
-          decisionId: rule.approvalRef?.decisionId ?? null,
-        }
-      : null,
-    issue: issue ? { status: issue.status, updatedAtTs: issue.updatedAtTs } : null,
-  }
+  return snapshotState(store, { ruleId, issueId })
 }
 
 function sameFingerprint(a, b) {
-  return canonicalJson(a) === canonicalJson(b)
+  return sameState(a, b)
 }
 
 export function describeScope(scope) {
@@ -322,8 +314,31 @@ export async function runApprove(ctx, id) {
     }
   }
 
-  // ---- record ----
-  const { decision, rule: newRule } = store.recordDecision({ kind: "approve", ruleId: rule?.id ?? null, object })
+  // ---- record through the shared approval critical section (bug ① TOCTOU
+  // fix): final re-check of the stage-2 snapshot + recordDecision serialized
+  // across processes; the tool face uses the exact same section, so a
+  // concurrent tool approval/stop can never interleave here. StoreError keeps
+  // propagating to the CLI main handler (same as before). ----
+  let recorded
+  try {
+    recorded = submitDecision({
+      store,
+      kind: "approve",
+      ruleId: rule?.id ?? null,
+      issueId: issue?.id ?? null,
+      object,
+      snapshot: before,
+    })
+  } catch (e) {
+    const msg = describeSubmitError(e)
+    if (msg) {
+      io.print(msg.split("\n")[0])
+      io.print("silent retries are forbidden: re-run approve and re-confirm from stage 1. No decision was recorded this time.")
+      return { code: 1 }
+    }
+    throw e
+  }
+  const { decision, rule: newRule } = recorded
   if (issue) {
     try {
       store.upsertIssue({ id: issue.id, status: "approved" })

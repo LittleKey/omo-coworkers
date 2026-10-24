@@ -62,6 +62,8 @@ import { validateEvidence, openHostDbReadOnly } from "./evidence.mjs"
 import { buildDraftRuleTool } from "./draft.mjs"
 import { buildPreparePublishTool } from "./publish.mjs"
 import { buildMemoryStatusTool } from "./view.mjs"
+import { buildApprovalTools } from "./approval-tools.mjs"
+import { clampConfirmTimeoutMin } from "./confirm.mjs"
 import {
   checkCurrentSession,
   gateSession,
@@ -124,6 +126,13 @@ export function resolveMemoryOptions(options) {
     // v6.2 system-ride delivery mode (§III.8): off (default, no-op) |
     // shadow (gate runs, wouldRide logged, system untouched) | inject.
     delivery: m.delivery === "shadow" ? "shadow" : m.delivery === "inject" ? "inject" : "off",
+    // Phase 3 (R33+): confirmation-form wait in minutes — clamped 1..30,
+    // default 10 (adjudication: 10-minute default, 30-minute cap).
+    confirmTimeoutMin: clampConfirmTimeoutMin(m.confirmTimeoutMin),
+    // Test/diagnostic injection for the Bridge A confirmation flow
+    // ({env, fetchImpl, now, pollMs, httpTimeoutMs, readFile}); null in
+    // production (confirm.mjs then resolves the real host API).
+    confirm: m.confirm && typeof m.confirm === "object" ? m.confirm : null,
   }
 }
 
@@ -138,7 +147,7 @@ export { defaultMockDir } from "./common.mjs"
  * {registered:false} and the host tool surface is untouched. Registration
  * failures are logged via the provided `log` callback (if any) and swallowed —
  * the existing supervisor behavior must never be affected (D1 fault
- * isolation). All four tools register together or not at all: the enable gate
+ * isolation). All tools register together or not at all: the enable gate
  * and the codemode:false option are per-tool identical, so a partial surface
  * would only mislead (III.1: the primitives form one face).
  */
@@ -169,13 +178,15 @@ export async function registerMemoryTool(ctx, { log } = {}) {
   }
 }
 
-/** All memory tools in registration order (memory_record_correction first). */
+/** All memory tools in registration order (memory_record_correction first;
+ *  phase 3 adds the four approval/delivery tools behind the same switch). */
 export function buildMemoryTools({ cfg }) {
   return [
     buildRecordCorrectionTool({ cfg }),
     buildDraftRuleTool({ cfg }),
     buildPreparePublishTool({ cfg }),
     buildMemoryStatusTool({ cfg }),
+    ...buildApprovalTools({ cfg }),
   ]
 }
 
