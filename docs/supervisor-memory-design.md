@@ -1,8 +1,8 @@
-# Supervisor Memory 设计 v6.2 — 总体方向契约(人控纠错学习闭环 + 运行时演进)
+# Supervisor Memory 设计 v6.3 — 总体方向契约(人控纠错学习闭环 + 运行时演进)
 
-日期: 2026-10-23(v6.1 2026-10-24; v6.2 2026-10-25)
-状态: 方向契约已定(v5.0 = R19+R18+R20+R21 收窄 + M1 已实施; v6.0 增补 Part III 运行时演进: R23→R24→R25 判决定案; **v6.2 定稿 §III.8 运行时投递通道=system-ride: R30→Claude R31→探针→Oracle R32 判决定案**); 门 A 已 FAIL → 失败分支生效: 手动入口 + 人审静态规则; M1(live) 已上线, P5 试用中
-评审链: (v5.0 及以前见 Part I/II 各节) → 用户两路径提案(对话内批准+会话级 nudge) → Oracle R23(路径1先行/路径2收窄) → 用户"苦涩的教训"(模型足够强后只需工具与描述, 自行编排) → Oracle R24(修订方向 PASS: 模型自主编排+宿主约束权限) → Claude R25(proceed-with-changes: 三改两刀) → v6.0 → 用户要求 project×agent 限定规则(AGENTS.md 通道结构性做不到) → Oracle R30(CHANGES) → v6.1 → Claude R31(changes-required: 更简替代=system 注入) → 探针证实 system 可变生效(/tmp/opencode/probe-system/) → Oracle R32(CHANGES: 方向成立, system-ride 定为唯一运行时通道) → v6.2
+日期: 2026-10-23(v6.1 2026-10-24; v6.2 2026-10-25; v6.3 2026-10-25)
+状态: 方向契约已定(v5.0 = R19+R18+R20+R21 收窄 + M1 已实施; v6.0 增补 Part III 运行时演进: R23→R24→R25 判决定案; v6.2 定稿 §III.8 运行时投递通道=system-ride; **v6.3 定稿 §III.1/III.2 工具面 v3+桥 A 确认协议: R33→桥探针→桥选型裁决→阶段 1-4 实施**); 门 A 已 FAIL → 失败分支生效: 手动入口 + 人审静态规则; M1(live) 已上线, P5 试用中; 手机端 form 真人验收为最后未验收前提
+评审链: (v5.0 及以前见 Part I/II 各节) → 用户两路径提案(对话内批准+会话级 nudge) → Oracle R23(路径1先行/路径2收窄) → 用户"苦涩的教训"(模型足够强后只需工具与描述, 自行编排) → Oracle R24(修订方向 PASS: 模型自主编排+宿主约束权限) → Claude R25(proceed-with-changes: 三改两刀) → v6.0 → 用户要求 project×agent 限定规则(AGENTS.md 通道结构性做不到) → Oracle R30(CHANGES) → v6.1 → Claude R31(changes-required: 更简替代=system 注入) → 探针证实 system 可变生效(/tmp/opencode/probe-system/) → Oracle R32(CHANGES: 方向成立, system-ride 定为唯一运行时通道) → v6.2 → 用户要求工具面统一/瘦身/审批 tool 化(手机可操作) → Oracle R33(方向 PASS, 审批 BLOCKED 待桥验证) → 桥探针(AVAILABLE: 桥 A form HTTP/桥 B permission.assert) → 桥选型裁决(选 A 单用, BLOCKED 解除) → 阶段 1-4 实施 → v6.3
 前任: v5.0(本文件 Part I/II); v4.1/v3.1/v2.0(归档 `docs/archive/`)
 结构: Part I = 总体方向契约(R19 为基 + R21 修订); Part II = 现行细节契约(M1 实施态); Part III = 运行时演进契约(R23–R25 定案, 优先级最高, 与 Part I 冲突处以 Part III 为准)
 
@@ -397,7 +397,7 @@ report_correction(幂等, 宿主校验 evidence)
 
 ---
 
-# Part III. 运行时演进契约(R23–R25 定案, 2026-10-23)
+# Part III. 运行时演进契约(R23–R25 定案, 2026-10-23; v6.3 增补 R33 工具面与桥 A 确认协议)
 
 > 优先级: 本 Part 与 Part I/II 冲突处以本 Part 为准。触发: 用户两路径提案 → R23 → 用户"苦涩的教训"重构 → R24 → R25 → 本定案。
 > 一句话: **发现、起草、编排归模型; 授权、来源、有界、撤销归系统。** 脚手架随时可删, 边界不靠模型自觉。
@@ -406,34 +406,47 @@ report_correction(幂等, 宿主校验 evidence)
 
 - 三分法按**功能**而非按"要不要删": ①决策方法处方(教模型怎么做)——应删, 是强模型天花板; ②机制约束(物理不变量, 如 fail-closed/单出口/预算)——留, 能力双向放大不改变其价值; ③用户政策(何时自动记录/投递)——留, 是授权问题非能力问题。
 - "仅用户要求才记录"拆两层: **能力层**(模型可随时选择调用记录工具)与**政策层**(自动保存候选需用户显式开启 + 有界待审队列)。自动记录非零副作用(候选噪声挤占 digest), 故政策默认手动。
-- **"不阻碍能力增长"必须可检验**: 落为 lint——工具描述中每一句必须是三者之一: 宿主可核查的效果/契约陈述、或标注"可删提示"的文案。纯散文式边界(无任何机制检查)按 bug 处理。
+- **"不阻碍能力增长"必须可检验**: 落为 lint——工具描述中每一句必须是三者之一: 宿主可核查的效果/契约陈述、或标注"可删提示"的文案。纯散文式边界(无任何机制检查)按 bug 处理。**v6.3 分工细化(R33)**: 描述=用途+必要调用条件+实际效果(一两句, 含关键"不做什么"); schema=输入(类型/必填/上限); 返回值=具体失败与下一步。删除工作流教程, 不删权限语义。
 - **规则分类同样适用于已存储规则**(R25 Q1): preference 类=用户政策, 保留; capability 类=针对当前模型弱点的处方, **模型换代时人工复核**, 不自动禁用也不永久免检。
 - **插件身份定调(R28-claude, 2026-10-23)**: supervisor = **人治理的政策插件**(capture→人审→静态规则→可选确定性检查→复发度量, 一个环), 不再自称"旁路观察者"。带内/带外不是本质分界, **产出的寿命与批准权**才是: bcp=模型自管的工作记忆; supervisor-memory=人批准的持久政策。存储可共享, 批准权不混。
 
-## III.1 工具面 v2(五原语, R24 划分 + R25 修正)
+## III.1 工具面 v3(v6.3: R33 定案, `memory_*` 八工具, 已全部实施)
 
-| 原语 | 作用 | 关键约束 |
+| 工具 | 作用 | 关键约束 |
 |---|---|---|
-| `report_correction` | 登记 Issue/Event(对象语义"疑似纠正", 非"已确认") | 已实施(M1); 描述去程序化: 只留对象语义/输入契约/效果/失败行为, 不教句式与步骤 |
-| `draft_rule` | 为指定 Issue 起草 Rule 文本(仅写草稿态) | 不产生任何授权; 草稿变更不影响已有决策 |
-| `prepare_publish` | 为**已批准** Rule 生成应用补丁(**零文件写入**, 故不叫 publish) | 回执必须明示"未应用"; `published` 状态仅在 D9 只读检查确认目标文件与补丁字节一致后由 CLI/检查器记录 |
-| `enable_rule` / `disable_rule` | 会话级启用/停用(step 3, 契约见 III.8; 授权语义按 R30 修正) | 投递开关授权见 III.8; 停用永远无条件即时 |
-| 只读状态视图 | 模型可查当前规则/候选/自己会话内已启用项 | 最小信息, 不含他人审批流 |
+| `memory_status` | 查看当前范围规则/待审候选/详情(按 id), 只读 | 视图层按项目过滤(修复跨项目泄漏); user-global 全项目可见; 范围外 id 统一 NOT_FOUND 不暴露存在性; pending.items ≤20 |
+| `memory_record_correction` | 登记有用户来源的纠正候选(对象语义"疑似", 非"已确认") | evidence 宿主校验(D4); 仅回执与 ID, 不产生任何授权 |
+| `memory_draft_rule` | 为指定候选起草规则正文(仅写草稿态) | 不产生授权; 草稿变更不影响已有决策 |
+| `memory_approve_rule` | 完整展示批准对象→宿主 form 确认→记录批准 | 不投递不写文件; 见 III.2 |
+| `memory_prepare_publish` | 为已批准**静态**规则生成应用/移除补丁(mode=apply\|remove) | 零文件写入; 回执明示"未应用"; 移除补丁与 CLI disable 输出字节一致 |
+| `memory_enable_delivery` | 宿主 form 确认后授权 system-ride 投递(绑四元组) | 独立授权; 见 III.2/III.8; disabled 规则拒绝(须新版重新批准) |
+| `memory_disable_delivery` | 停止后续投递 | 停止类: 明确管理请求下**无二次确认**(v6.3 修 CLI bug③); 保留身份/scope 校验 |
+| `memory_disable_rule` | 停用规则(静态残留出移除补丁) | 同上; 不声称清除历史已见文本 |
 
-- **无任何原语接受 `confirmed`/`approved` 类参数**: 确认是宿主事件, 不是模型可传的参量(防模型自证授权)。
-- **政策开关(自动候选、队列帽、重投递)只对用户可达**(CLI/配置), 永不做成模型工具; 停止手段必须无模型参与即可完成。
-- 移除已发布规则 = 对应 disable 后的又一次 `prepare_publish`(移除补丁), 不新增原语。
+- **无任何工具接受 `confirmed`/`approved`/答案/hash/"用户已同意"类参数**(黑名单拒绝); 确认是宿主事件, 不是模型可传的参量。
+- **rule disable 与 delivery disable 区分**: 前者停规则(记录+投递全停), 后者仅停投递、规则与历史保留。
+- **政策开关(自动候选、队列帽、重投递)只对用户可达**(CLI/配置), 永不做成模型工具; 停止手段必须无模型参与即可完成(CLI 常备)。
+- 错误信封: `{ok:false, code:"MEMORY_*", message, nextTool?, retry:"requires_user_confirmation"|"safe"|"never"}`; 提交成功后后续步骤失败必须带 decisionId(防重复批准)。
+- 迁移: 改名零成本(ID/version/hash/AGENTS.md/已批准规则不动); 旧 CLI 决定=正常历史; 新旧名不并存。
 
-## III.2 确认协议(对话内一句话授权, 1b 门槛)
+## III.2 确认协议(v6.3: 桥 A 宿主 form, R33+桥裁决定案, 已实施)
 
-R24 接受"对话内一句话授权"但 R25 加固了误绑定面。启用前提(全部满足):
+> v6.2 的"短码+真人后续消息"方案被 R33 明确修订: **宿主原生确认的可信应答可替代短码**。探针(/tmp/opencode/q-bridge/)证实 execute 调用栈内无 ctx.question API, 但宿主 form/question HTTP API(桥 A)与 ctx.permission.assert(桥 B)两条实测可用; 裁决**选桥 A 单用**。
 
-1. 宿主在待确认动作的工具输出中放置**绑定对象版本 hash 的短码**;
-2. 验证 OpenChamber 对该工具输出**逐字渲染**(合成消息/摘要不得改写);
-3. 授权仅接受**其后真人键入的、含该短码的消息**; 以下一律不算: nudge/revive/压缩合成回合、触发请求本身("起草并启用"那一句)、current-turn 证据回退、模型转述、fork/revert 复制的历史确认;
-4. 变更即失效: 对象在确认到达前被改动, 短码作废。
-- 任一前提不成立 → 对话内确认不启用, 走 CLI 三段式(1a 状态)。
-- 不建 LLM 审批裁判; 模型不得做自己授权的唯一证明者。
+**桥 A 机制**: 插件在工具 execute 内作为 **loopback HTTP 客户端**调用宿主既有服务(端口/凭据取自宿主 service.json; 插件零监听零新端口), 创建单选 form(选项=Confirm/Cancel, custom:false), 阻塞等待应答, 应答直接回插件——**不经过模型**。UI 侧与原生 question 同体系(TUI 已实测; 手机渲染待真人验收)。
+
+**协议要素(全部已实施, test/approval.test.mjs)**:
+1. **完整展示在先**: 全文正文(非摘要)/scope/agent 限定/channel/静态目标绝对路径与跟踪状态/review date/对象哈希/撤销边界/"持续注入非仅本会话"(投递类)/真实截止时间; 正文作审阅数据展示(Markdown 不得冒充按钮)。
+2. **红线**: 模型不得提供 confirmed/答案/hash/"用户已同意"; 参数黑名单拒绝; 模型永远不当中继。
+3. **deadline 语义**: 默认 10 分钟, 配置上限 30(confirmTimeoutMin); **检查先于每次读取且先于接受 answered**(关闭探针发现的迟答竞态); 到期→本地 pending 不可消费→DELETE form; DELETE 失败也不得接受迟答。取消/对象变更/fork→确认失效; 重试=全新决策。
+4. **单次消费**: 一个 formID 只能喂一个 decision(consume-once)。
+5. **审计链**: approval-audit.jsonl 记 `decisionId ↔ (sessionID, formID) ↔ 对象版本+展示快照哈希+回答+时间+截止+消费状态`; 拿不到宿主 formID 关联→不批准→CLI 回退; 不得自造 id 补证。
+6. **同 UID 剩余风险声明**: form 应答不抵抗同 UID 冒充(loopback 直答), 与 AGENTS.md 直写同级——已接受; 但**不得声称证明真人身份**; HTTP 冒答还能伪装审计, 故审计只作检测补充不作授权依据。
+7. **桥 B 弃用原因**: 二元展示弱/assert 未返回审计 ID/saved(always)权限可能静默通过; 若未来启用须强制每次实际询问+仅 once+不持久化。
+8. **TOCTOU 修复(bug①)**: 共享审批服务层跨进程短临界区(approval.lock O_EXCL, 死 pid/心跳恢复)包住"终态复核+recordDecision"; 等用户时绝不持锁; CLI 与工具同一入口。
+9. **CLI 定位**: init/诊断/导出/无模型停止入口 + 桥不可用时的备用审批(三段式保留, 底层同临界层); 不经 --yes 变成免确认通道。
+
+**手机端渲染**为最后一项未验收前提——live 真人验收通过前, 审批工具在手机场景视为"未验收可用"。
 
 ## III.3 AGENTS.md 写路径完整性(R25 Q5, 现在就做)
 
@@ -445,18 +458,23 @@ R24 接受"对话内一句话授权"但 R25 加固了误绑定面。启用前提
 ## III.4 削减决定(R25 两刀 + 压缩)
 
 - **砍重投递**: R24 曾允许"首+一重复(≥3 回合间隔, 帽 2)"; R25 裁定只发单次(Oracle 自认重复可能零增益)。N=3 初值弃用; 若未来摩擦日志显示会话内遗忘, 属 step 3 证据, 届时重议。
-- **授权六档压三行**: ①免确认(只读/起草/停止类) ②一次性政策开关(用户显式操作) ③绑定确认(一切有后果动作)。六档表作废。
+- **授权六档压三行**: ①免确认(只读/起草/停止类) ②一次性政策开关(用户显式操作) ③绑定确认(一切有后果动作)。六档表作废。v6.3: 停止类免二次确认已实施(disable_delivery/disable_rule 工具+CLI delivery-disable 修 bug③)。
 - P5 阶段结论: 每周一行记录即可, 不做正式分阶段结论文书。
 
 ## III.5 迁移序列(串行, R25 重排)
 
 1. **1a 工具面(先行)**: `report_correction`(已有)+`draft_rule`+`prepare_publish`+只读视图; 确认走 CLI 三段式(已实施)。**1a 不含 enable_rule**(R25 Q2: 授权类原语不与起草类同船)。
-2. **1b 对话内确认**: III.2 四前提逐一验证通过后启用; 否则无限期停留 1a。
+2. **1b 对话内确认**: ~~III.2 四前提逐一验证通过后启用~~ **v6.3 已以桥 A 形态实施**(R33 修订确认协议, 见 III.2; 阶段 3 落地, 手机真人验收为最后一项未验收前提)。
 3. **step 2 自动候选**: 政策开关用户显式开启; 观察 linkage(56%)而非 recall; 门 A 原结论保留(自动检测器不复活)。
 4. **step 3 会话启用**: enable_rule/disable_rule 上线。**触发条件修订(v6.1)**: 原条件"仅当 P5 摩擦日志出现会话内遗忘证据"已被更强触发取代——2026-10-24 用户要求规则按 project×agent 限定生效(AGENTS.md 静态通道结构性无法按 agent 限定), 投递契约见 §III.8(v6.2: system-ride 形态, R31+R32 判决定案)。
 - 2 与 3 **串行不并行**(单人使用者, 重叠变更使 P5 分段不可读); 各步独立回退, 任一步失败不拖累已上线部分。
 
-## III.6 评审记录(v6.0; v6.1 增补 R30; v6.2 增补 R31/探针/R32)
+## III.6 评审记录(v6.0; v6.1 增补 R30; v6.2 增补 R31/探针/R32; v6.3 增补 R33/桥裁决)
+
+- R33-oracle(2026-10-25, ses_e92063355ffee9wSAbennUJmpV, 基于 bcfa69b 静态检查): 工具面重设计**方向 PASS; 审批工具 BLOCKED 直到宿主桥验证**。memory_* 八工具命名/描述骨架(lazy help)/结构化错误信封/审批红线(工具自取宿主确认 vs 模型转告=不成立)/一次完整展示替代三段 TTY/停止类免确认/迁移零成本/三真 bug(approve TOCTOU、view 跨项目泄漏、delivery-disable 多余确认)。全文见会话记录。
+- 桥探针(2026-10-25, fixer, /tmp/opencode/q-bridge/report.md): **PLUGIN_QUESTION_BRIDGE=AVAILABLE**——无原生 ctx.question; 桥 A=宿主 form/question HTTP API(loopback 客户端, 任意选项, execute 内阻塞, TUI 渲染, 宿主永不超时须自管); 桥 B=ctx.permission.assert(二元 once/always/reject)。异常面五类实测; 手机渲染未测。
+- 桥选型裁决(2026-10-25, oracle 同 R33 会话): **选桥 A 单用, BLOCKED 解除**。同 UID 冒答归入剩余风险但不证明真人; 禁 always/持久授权; 审计 A 已验证 formID, B 未验证; 超时默认 10/上限 30, deadline 先于接受 answered(探针 qbridge/index.mjs:107-114 迟答竞态勿复刻); 完整展示/竞态/单次消费/手机渲染四项分别验收。
+- 阶段实施(2026-10-25, fixer×2): 阶段 1=改名+描述+信封(8613664, 248 测试); 阶段 4=status 扩展+泄漏修复+移除补丁(7f94c71, 255 测试); 阶段 3=桥 A 审批工具×4+共享临界层修 TOCTOU(d60703b, 284 测试, 全绿复跑)。阶段 2=探针(见上)。
 
 - R30-oracle(2026-10-24, ses_e9cfad3baffewFi9rmItNulE2a, 基于 91a1c66 静态检查): 运行时投递方案 **CHANGES(方向保留)**。A 投递时机=首真人消息后首个合格请求/让位后等下一真人回合/**去重改持久化 (session,rule) 键**(turn binding 不能保证会话级一次); B agent 绑定=当前请求 agent 名字面匹配, 复用 agents 字段, 不新增 agentTags, 未知拒投, 改名人工重确认; C shadow=人工正反例+≥10 真实会话核对, 误投即停, 不按时长放行; **D 高优先**=CLI-only 正确但 kind=enable 语义是"重新批准新版本"非投递开关, 须新决定种类并区分会话授权/跨会话自动启用; E=预算不扩, memory ≤1 封/会话, nudge 优先, ≤1200 整条拒投不截断; F=单规则单通道, 切换先清残留, disable 不撤回已见; G=无更简路径; **H 高优先**=approve 须绑定正文+范围+agent+通道四元组, runtime 永不生成静态补丁, 且此步是 step 3 非 step 2(迁移条件已修订)。最小修改集=A 过滤去重+D 授权语义+H 通道契约, C 验收。
 - Claude R31(2026-10-24, ses_e9c6a2fe3ffe7uaCTdPPaJRwNi, 记录 …/2003036e…/e000005): §III.8 v6.1 **changes-required**: 通道门缺失/崩溃窗口(先写后投)/计数持久化/去重增长独立文件+按会话删除修剪/静默断绑 digest 哨兵/newest-wins 饿死(我自加第8条被驳回)/饥饿度量/≤1200 对剩余预算校验/delivery-enable 绑版本哈希+改版复位/发送时重读/合成识别元数据化; **Q7 提出 system 字段注入替代(我们与 oracle 均未评估过)**。
@@ -505,7 +523,7 @@ R24 接受"对话内一句话授权"但 R25 加固了误绑定面。启用前提
 - **请求内防重**: 同一请求内 hook 多次调用只注一次(宿主每请求重建 system ≠ push 幂等, 须请求内护栏);
 - 形状防御: system 非预期形状(非数组/元素非 {type,text})→**仅关闭 memory 注入**(插件其余功能不受影响), 宿主升级后重跑探针再恢复。
 
-**授权语义**: 新决定种类 `delivery-enable` / `delivery-disable`(CLI 人工记录), 绑定 **(ruleId, version, bodyHash, channel)**; 改版重批准→投递自动复位 disabled; **常驻性与 system 指令优先级变化属显式批准语义**(批准对象须载明"将随该会话每次模型请求注入 system"); 会话授权(1b)须绑 sessionId; 跨会话启用另行确认, 旧授权不自动扩大; v1 enable 仅 CLI。
+**授权语义**: 新决定种类 `delivery-enable` / `delivery-disable`, 绑定 **(ruleId, version, bodyHash, channel)**; 改版重批准→投递自动复位 disabled; **常驻性与 system 指令优先级变化属显式批准语义**(批准对象须载明"将随该会话每次模型请求注入 system"); 会话授权(1b)须绑 sessionId; 跨会话启用另行确认, 旧授权不自动扩大。v6.3: 授权入口=`memory_enable_delivery` 工具(桥 A 确认, 见 III.2)与 CLI 双入口, 同一临界层; **投递门、四元组绑定、预算、撤销语义不变**。
 
 **发送时校验**: hook 时重读决定记录+四元组(正文+范围+agent+通道)哈希复核, 不符即拒注。
 
