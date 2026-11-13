@@ -9,8 +9,8 @@
         "humanizer"
       ],
       "mcps": [],
-      "description": "Create/edit formal product, technical and management documents; review expression, structure, consistency and audience fit; exclude internal agent plans/state.",
-      "orchestratorPrompt": "- Use document-writer with MODE: WRITE for formal document creation/body edits, or MODE: REVIEW for expression, structure, document-internal consistency, audience fit and readability.\n- Keep internal agent plans/state in the main session and independent platform work with lark-operator. Apply the main-session document/review policy for dispatch and acceptance.",
+      "description": "Create, edit and review formal product, technical and management documents; exclude internal agent plans/state.",
+      "orchestratorPrompt": "- Use document-writer with MODE: WRITE for formal document creation/body edits, or MODE: REVIEW for document review.\n- Keep internal agent plans/state in the main session and independent platform work with lark-operator. Apply the main-session document/review policy for dispatch and acceptance.",
       "permission": {
         "task": "deny",
         "question": "deny",
