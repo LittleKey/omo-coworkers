@@ -1,15 +1,15 @@
 {
   "name": "omo-coworkers",
-  "version": "3.3.0",
+  "version": "4.0.0",
   "type": "module",
-  "description": "Additive multi-agent orchestration extension for oh-my-opencode-slim: daily-office workflows beyond code, shipped as a reversible overlay with a host-aware installer (OpenCode v1 >=1.18.29, v2 >=2.0.20)",
+  "description": "OpenChamber extension with coworker skills and an operator-opt-in Claude dispatch guard; role configuration is managed separately.",
   "license": "MIT",
   "keywords": [
     "opencode",
     "oh-my-opencode-slim",
     "agents",
     "subagents",
-    "installer",
+    "openchamber",
     "llm"
   ],
   "repository": {
@@ -19,24 +19,29 @@
   "homepage": "https://github.com/LittleKey/omo-coworkers#readme",
   "bugs": "https://github.com/LittleKey/omo-coworkers/issues",
   "bin": {
-    "coworkers-install": "./bin/coworkers-install.mjs",
-    "dw-install": "./bin/coworkers-install.mjs",
     "supervisor-memory": "./bin/supervisor-memory.mjs"
   },
   "files": [
     "bin",
-    "installer",
-    "prompts",
+    "openchamber",
     "skills",
     "plugins",
-    "oh-my-opencode-slim.json",
     "README.md",
     "INSTALL.md",
     "SOURCES.md",
     "LICENSE"
   ],
   "scripts": {
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs plugins/claude-advisor/guard.test.mjs"
+  },
+  "openchamber": {
+    "apiVersion": 1,
+    "engines": { "openchamber": ">=2.7.2" },
+    "contributes": {
+      "panel": { "id": "omo-coworkers", "name": "OMO Coworkers", "icon": "ri-team-line" },
+      "skills": "skills",
+      "opencodePlugin": "openchamber/plugin"
+    }
   },
   "engines": {
     "node": ">=20"
