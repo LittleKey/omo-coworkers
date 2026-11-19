@@ -2,6 +2,9 @@
 // Run: node --test plugins/claude-advisor/guard.test.mjs
 import test from "node:test"
 import assert from "node:assert/strict"
+import { readFile } from "node:fs/promises"
+import { resolve } from "node:path"
+import { fileURLToPath } from "node:url"
 import { ClaudeAdvisorGuard } from "./index.v1.mjs"
 import claudeAdvisorV2 from "./index.js"
 
@@ -10,6 +13,34 @@ assert.deepEqual(Object.keys(hooks), ["tool.execute.before"], "plugin must regis
 const before = hooks["tool.execute.before"]
 
 const run = (tool, args) => before({ tool, sessionID: "guard-test" }, { args })
+
+test("source Claude config preserves project inheritance without extra authorization", async () => {
+  const configPath = process.env.CLAUDE_ADVISOR_CONFIG
+    ? resolve(process.env.CLAUDE_ADVISOR_CONFIG)
+    : fileURLToPath(new URL("../../../dotfiles/opencode/oh-my-opencode-slim.json", import.meta.url))
+  let text
+  try {
+    text = await readFile(configPath, "utf8")
+  } catch (cause) {
+    throw new Error(`Required Claude source config unavailable: ${configPath}; set CLAUDE_ADVISOR_CONFIG for another checkout layout`, { cause })
+  }
+  const claude = JSON.parse(text).acpAgents?.claude
+  assert.ok(claude, "source config must define acpAgents.claude")
+  assert.equal(claude.permissionMode, "reject")
+  assert.ok(!Object.hasOwn(claude, "cwd"), "Claude must inherit the session project")
+  assert.deepEqual(claude.args, [], "do not add auto-approval or pseudo-permission CLI arguments")
+  assert.deepEqual(Object.keys(claude).sort(), [
+    "command", "args", "env", "description", "wrapperModel", "permissionMode",
+    "timeoutMs", "prompt", "orchestratorPrompt",
+  ].sort(), "new authorization/config keys require explicit review")
+  assert.deepEqual(Object.keys(claude.env).sort(), [
+    "ANTHROPIC_MODEL", "CLAUDE_CODE_DISABLE_CLAUDE_MDS",
+    "CLAUDE_CODE_DISABLE_BUNDLED_SKILLS", "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS",
+    "CLAUDE_CODE_EFFORT_LEVEL",
+  ].sort(), "do not add environment-based permission overrides")
+  await run("acp_run", { agent: "claude", prompt: "Read .opencode/bcp/exports/evidence.json." })
+  await expectReject("acp_run", { agent: "claude", prompt: "Read evidence.", cwd: "/another/project" })
+})
 
 const rejectedMessages = []
 async function expectReject(tool, args, marker) {
