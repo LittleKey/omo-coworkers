@@ -1,0 +1,3 @@
+- For maintenance, follow existing tokens, components and conventions. Explore a new visual direction only when requested.
+- Use the requested audience's language for copy.
+- Claim visual observations only from inspected screenshots, images or snapshots; otherwise describe code-level intent and state that visual verification was not performed.

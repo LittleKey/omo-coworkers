@@ -2,7 +2,6 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import * as fs from "node:fs/promises"
 import { join } from "node:path"
-import { homedir } from "node:os"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { spawnSync } from "node:child_process"
 
@@ -11,7 +10,9 @@ const host = process.env.OPENCHAMBER_WEB_ROOT
 
 test("root extension cold-loads offline without node_modules; optional installed host parser check",
   async t => {
-    const root = await fs.mkdtemp(join(homedir(), ".omo-coworkers-test-"))
+    const sandbox = join(repo, ".opencode/work/validation")
+    await fs.mkdir(sandbox, { recursive: true })
+    const root = await fs.mkdtemp(join(sandbox, "package-"))
     try {
       const target = join(root, "extension")
       await fs.mkdir(target)
@@ -36,8 +37,16 @@ test("root extension cold-loads offline without node_modules; optional installed
       assert.equal(folder, join(target, "openchamber/plugin"))
       const nested = JSON.parse(await fs.readFile(join(folder, "package.json"), "utf8"))
       assert.equal(nested.type, "module")
-      assert.equal(pkg.openchamber.contributes.panel.entry, undefined)
-      assert.deepEqual(Object.keys(pkg.openchamber.contributes).sort(), ["opencodePlugin", "panel", "skills"])
+      assert.equal(pkg.version, "6.0.0")
+      assert.equal(nested.version, pkg.version)
+      assert.equal(pkg.openchamber.engines.openchamber, ">=2.8.0")
+      assert.equal(pkg.openchamber.contributes.panel.entry, "openchamber/panel/index.html")
+      assert.deepEqual(pkg.openchamber.contributes.service, {entry:"openchamber/service/main.mjs", runtime:"host"})
+      assert.deepEqual(Object.keys(pkg.openchamber.contributes).sort(), ["opencodePlugin", "panel", "service", "skills"])
+      await fs.access(join(target, pkg.openchamber.contributes.panel.entry))
+      await fs.access(join(target, pkg.openchamber.contributes.service.entry))
+      // Browser bridge is fully local; its entire static import closure relocates.
+      await import(pathToFileURL(join(target, "openchamber/panel/vendor/host.js")))
       const switches = [undefined, "0", "false", "true", "1"].flatMap(writer =>
         [undefined, "0", "true", "1"].map(guard => [writer, guard]))
       for (const [writerEnabled, enabled] of switches) {

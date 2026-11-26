@@ -1,8 +1,8 @@
 {
   "name": "omo-coworkers",
-  "version": "5.0.0",
+  "version": "6.0.0",
   "type": "module",
-  "description": "OpenChamber extension with coworker skills, frozen document-writer role payloads (with legacy opt-in native transform), and an operator-opt-in Claude dispatch guard; static role and OMO delivery are managed in local dotfiles.",
+  "description": "OpenChamber extension with coworker skills, explicit preview/apply/rollback for native OMO configuration, and default-off legacy writer and Claude guard hooks.",
   "license": "MIT",
   "keywords": [
     "opencode",
@@ -32,9 +32,10 @@
   },
   "openchamber": {
     "apiVersion": 1,
-    "engines": { "openchamber": ">=2.7.2" },
+    "engines": { "openchamber": ">=2.8.0" },
     "contributes": {
-      "panel": { "id": "omo-coworkers", "name": "OMO Coworkers", "icon": "ri-team-line" },
+      "panel": { "id": "omo-coworkers", "name": "OMO Coworkers", "icon": "ri-team-line", "entry": "openchamber/panel/index.html" },
+      "service": { "entry": "openchamber/service/main.mjs", "runtime": "host" },
       "skills": "skills",
       "opencodePlugin": "openchamber/plugin"
     }

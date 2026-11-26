@@ -1,0 +1,47 @@
+{
+  "format": 1,
+  "version": "6.0.0",
+  "compatibility": {
+    "omo": "3.0.8",
+    "opencode": "2.4.2",
+    "openchamber": "2.8.0"
+  },
+  "prompts": [
+    {
+      "path": "oh-my-opencode-slim/orchestrator_append.md",
+      "source": "prompts/orchestrator_append.md",
+      "sha256": "6e597a5ff764bce909772a82ad3f4588a4e228613e6ee18e10d18002653edd08"
+    },
+    {
+      "path": "oh-my-opencode-slim/oracle_append.md",
+      "source": "prompts/oracle_append.md",
+      "sha256": "3e8387bf74dcbdefbb259e573f611b7876ee18cc4be2932263cc97427801df27"
+    },
+    {
+      "path": "oh-my-opencode-slim/explorer_append.md",
+      "source": "prompts/explorer_append.md",
+      "sha256": "c6d4e92a0552809f7dc6721b0a119765a55d1d9b6070c5cafa4d84093567d173"
+    },
+    {
+      "path": "oh-my-opencode-slim/designer_append.md",
+      "source": "prompts/designer_append.md",
+      "sha256": "fb9ec7703bcfb6edf01a906bae40b8d33c0e2b521fe74dfca54846c738b5dc9c"
+    },
+    {
+      "path": "oh-my-opencode-slim/fixer_append.md",
+      "source": "prompts/fixer_append.md",
+      "sha256": "7a0e0126b772351048d6f587cc43a88ffe65ceec85d15a255a51c0c18d30a477"
+    },
+    {
+      "path": "oh-my-opencode-slim/document-writer.md",
+      "source": "../plugin/roles/document-writer.md",
+      "sha256": "36ef44de293053e5fbeb743851d63ba5c9965a85c78147e2b40dacc50f71fd9d"
+    },
+    {
+      "path": "oh-my-opencode-slim/lark-operator.md",
+      "source": "prompts/lark-operator.md",
+      "sha256": "b6e2bee850cf8ff2a5d9ab6ebea03f6c1695aae34eda6beea6aac11f88b31abb"
+    }
+  ],
+  "leaves": "fragments/leaves.json"
+}
