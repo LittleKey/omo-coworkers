@@ -4,39 +4,43 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <title>OMO 原生配置</title>
+  <title>OMO 配置管理器</title>
   <link rel="stylesheet" href="./panel.css">
 </head>
 <body>
 <main>
-  <header><div><p class="eyebrow">OMO COWORKERS · 原生配置</p><h1>先核对，再写入。</h1></div><button id="refresh" type="button">刷新状态</button></header>
-  <p class="intro">安装、启动和更新扩展均不写入原生配置。新内容仅在确认预览后应用。</p>
-  <aside class="warning">权限提示：此服务以宿主 Node 权限运行，不是操作系统文件沙箱。仅在信任此扩展后，于宿主「设置 → 扩展」批准本地服务。</aside>
-  <section aria-labelledby="status-title"><h2 id="status-title">当前状态</h2><dl id="status"><dt>服务</dt><dd>等待宿主连接…</dd></dl></section>
+  <header><div><p class="eyebrow">OMO COWORKERS</p><h1>配置管理器</h1><p class="muted">直接管理原生文件，保留你的个人配置。</p></div><button id="refresh" type="button">重新读取</button></header>
+  <section class="target" aria-labelledby="target-title"><h2 id="target-title">编辑目标</h2><dl id="status"><dt>磁盘配置</dt><dd>正在连接本地服务…</dd><dt>运行中配置</dt><dd>未确认</dd></dl></section>
   <div id="notice" role="status" aria-live="polite"></div>
-  <section aria-labelledby="confirm-title">
-    <h2 id="confirm-title">1 · 核对运行环境</h2>
-    <p class="muted">以下均为你的声明，并非服务独立检测。自定义配置根、外部服务器或不同版本暂不支持。不要在此输入环境变量值或秘密。</p>
-    <form id="confirmations">
-      <fieldset id="checks"><legend>逐项确认（全部必选）</legend></fieldset>
-      <fieldset><legend>填写实际版本（不是扩展版本）</legend><div id="versions" class="versions"></div></fieldset>
-      <div id="recovery-section" hidden>
-        <h3>恢复中断的写入</h3>
-        <p>上次写入未完成。恢复会按日志有条件地还原托管内容，不应用新载荷，也不验证运行时。发生冲突时会停止；请勿强制覆盖。</p>
-        <label class="check"><input type="checkbox" id="recovery-check" aria-label="我确认恢复将写入磁盘，还原中断事务"><span>我确认恢复将写入磁盘，并请求还原中断事务。</span></label>
-        <button type="button" id="recover" disabled>确认恢复中断写入</button>
-      </div>
-      <div class="actions"><button type="submit" id="preview" disabled>预览应用</button><button type="button" id="rollback-preview" disabled>预览回滚</button></div>
-    </form>
+  <div id="diagnostics" aria-label="诊断与处理建议"></div>
+  <nav aria-label="管理入口" class="tabs">
+    <button type="button" data-view="config" aria-current="page">配置</button>
+    <button type="button" data-view="templates">增强模板</button>
+    <button type="button" data-view="contributions">扩展内容</button>
+    <button type="button" data-view="history">变更记录</button>
+  </nav>
+  <section id="view-config" class="view" aria-labelledby="config-title">
+    <div class="section-heading"><div><h2 id="config-title">磁盘上的配置</h2><p class="muted">普通值可编辑；受保护值留在服务端，不会发送到面板。</p></div></div>
+    <div class="workspace"><aside id="resources" aria-label="配置资源"></aside><div id="editor"><p class="empty">正在读取配置结构…</p></div></div>
+  </section>
+  <section id="view-templates" class="view" hidden aria-labelledby="templates-title">
+    <div class="section-heading"><div><h2 id="templates-title">模板配方 · 按需生成修改</h2><p class="muted">模板不长期托管配置，也不提供永久按模板移除。匹配内容无需修改；不同个人值默认保留，只有明确选择后才替换。</p></div></div>
+    <div id="templates" class="cards"></div>
+    <section class="subsection"><h3>我的模板</h3><p class="muted">从选定的普通配置项保存；秘密与机器专属值不会导出。</p><div id="user-templates"></div><div id="template-create"></div></section>
+  </section>
+  <section id="view-contributions" class="view" hidden aria-labelledby="contributions-title">
+    <h2 id="contributions-title">随扩展贡献的内容</h2><p class="muted">已贡献、行为已开启和运行中已加载是不同状态。这里不安装或复制插件。</p><div id="contributions"></div>
+  </section>
+  <section id="view-history" class="view" hidden aria-labelledby="history-title">
+    <h2 id="history-title">最近变更</h2><p class="muted">保留最近十次，不设时间期限。撤销也先预览差异；同字段冲突或容量不足可能拒绝，不强制覆盖，不保证无限重做。</p><div id="history"></div><div id="recovery"></div><div id="migration"></div>
   </section>
   <section id="preview-section" hidden aria-labelledby="preview-title">
-    <h2 id="preview-title" tabindex="-1">2 · 审阅变更摘要</h2>
-    <p class="muted">仅展示托管文件/字段的哈希变化，不是文本差异，也不是运行时验证。原始配置和现有提示词不会发送到面板。</p>
-    <p id="expiry"></p><ul id="warnings"></ul><div id="changes"></div>
-    <label class="check"><input type="checkbox" id="proceed-check" aria-label="我已审阅此预览，确认执行本次写入"><span>我已审阅此预览，确认执行本次写入。</span></label>
-    <div class="actions"><button id="proceed" type="button" disabled>确认写入</button><button id="cancel" type="button">取消预览</button></div>
+    <div class="section-heading"><div><p class="eyebrow">保存之前</p><h2 id="preview-title" tabindex="-1">本次内容差异</h2></div><button id="cancel" type="button">返回编辑</button></div>
+    <p id="expiry" class="muted"></p><div id="warnings"></div><div id="changes"></div><div id="risk-confirmation"></div>
+    <div class="actions"><button id="proceed" class="primary" type="button" disabled>保存到磁盘</button><span id="proceed-reason" class="muted"></span></div>
   </section>
-  <footer><strong>写入不等于生效。</strong> 写入后请自行通过宿主 UI 重启/重载 OpenCode，再核对实际加载的代理与新会话。面板不自动重启，也不将重启视为运行时验证。项目配置仍可能覆盖用户配置。</footer>
+  <div class="savebar"><div><strong id="draft-status">没有未保存修改</strong><p id="save-reason" class="muted">读取配置后即可编辑普通字段。</p></div><div class="actions"><button id="discard" type="button" disabled>放弃草稿</button><button id="preview" type="button" class="primary" disabled>查看差异</button></div></div>
+  <footer><p>保存不等于运行中已生效。需要时请通过宿主 UI 重载，再核对新会话；面板不会自动重启。</p><details><summary>权限与数据边界</summary><p>本地服务使用宿主 Node 权限，并非操作系统文件沙箱。安装、启动和更新不自动写入原生配置。已有秘密不提供查看或替换；高级视图仅为受保护投影，保存使用小型字段修改而非覆盖整份配置。</p></details></footer>
 </main>
 <script type="module" src="./app.js"></script>
 </body>

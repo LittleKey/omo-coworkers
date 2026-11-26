@@ -1,6 +1,6 @@
 {
   "name": "omo-coworkers",
-  "version": "6.0.0",
+  "version": "6.1.0",
   "type": "module",
   "description": "OpenChamber extension with coworker skills, explicit preview/apply/rollback for native OMO configuration, and default-off legacy writer and Claude guard hooks.",
   "license": "MIT",

@@ -2,73 +2,69 @@ import http from 'node:http';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { pathToFileURL } from 'node:url';
-import { NativeStore } from '../native-config/transaction.mjs';
+import { ConfigManager, exactKeys } from '../native-config/manager.mjs';
 import { NativeError } from '../native-config/generator.mjs';
-export const confirmations = ['candidateRootConfirmed', 'defaultManagedLocalHost', 'hostEnvironmentChecked', 'writerRuntimeDisabled', 'oldWriterStopped', 'workPaused', 'managedBeforeValuesContainNoSecrets'];
-export const versions = { omo: '3.0.8', opencode: '2.4.2', openchamber: '2.8.0' };
-const exact = (o, keys) => o && typeof o === 'object' && !Array.isArray(o) && Object.keys(o).length === keys.length && Object.keys(o).every(k => keys.includes(k));
-function confirm(body) {
-  if (!exact(body, ['confirmations']) || !exact(body.confirmations, [...confirmations, 'versions']) || confirmations.some(k => body.confirmations[k] !== true)) throw new NativeError('CONFIRMATION_REQUIRED');
-  if (!exact(body.confirmations.versions, Object.keys(versions)) || Object.entries(versions).some(([k, v]) => body.confirmations.versions[k] !== v)) throw new NativeError('UNSUPPORTED_VERSION');
-}
-export function createService({ token, root, store = new NativeStore(root) }) {
+import { readBehaviorSettings, updateBehaviorSettings, behaviorContributions } from './behavior-settings.mjs';
+
+export function createService({ token, root, manager = new ConfigManager(root) }) {
   if (typeof token !== 'string' || token.length < 16) throw new NativeError('INVALID_TOKEN');
   const expected = Buffer.from(`Bearer ${token}`);
-  const send = (response, status, value) => {
-    response.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
-    response.end(JSON.stringify(value));
+  const send = (res, status, value) => {
+    res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
+    res.end(JSON.stringify(value));
   };
-  const server = http.createServer(async (request, response) => {
-    const supplied = Buffer.from(request.headers.authorization ?? '');
+  const routes = new Set(['GET /health', 'GET /snapshot', 'GET /status', 'GET /templates', 'GET /contributions', 'POST /reveal', 'POST /preview', 'PATCH /config', 'POST /undo-preview', 'POST /migration-preview', 'POST /recover', 'POST /template-preview', 'POST /user-templates', 'DELETE /user-templates', 'PATCH /settings']);
+  const server = http.createServer(async (req, res) => {
+    const supplied = Buffer.from(req.headers.authorization ?? '');
     if (supplied.length !== expected.length || !crypto.timingSafeEqual(supplied, expected)) {
-      request.resume(); return send(response, 401, { ok: false, error: { code: 'UNAUTHORIZED', message: 'UNAUTHORIZED' } });
+      req.resume(); return send(res, 401, { ok: false, error: { code: 'UNAUTHORIZED', resource: null, field: null, reason: 'Authentication required.', nextAction: 'Use the host service bridge.' } });
     }
     try {
-      const route = `${request.method} ${request.url}`;
-      if (!['GET /health', 'GET /status', 'POST /preview', 'POST /apply', 'POST /rollback-preview', 'POST /rollback', 'POST /recover'].includes(route)) {
-        request.resume(); return send(response, 404, { ok: false, error: { code: 'NOT_FOUND', message: 'NOT_FOUND' } });
-      }
-      let text = '', size = 0;
-      for await (const chunk of request) {
-        size += chunk.length;
-        if (size > 16384) throw new NativeError('TOO_LARGE');
-        text += chunk.toString('utf8');
-      }
-      if (request.method === 'GET' && size) throw new NativeError('INVALID_REQUEST');
+      const route = `${req.method} ${req.url}`;
+      if (!routes.has(route)) { req.resume(); return send(res, 404, { ok: false, error: { code: 'NOT_FOUND', resource: null, field: null, reason: 'Unknown manager action.', nextAction: 'Refresh the extension.' } }); }
+      const chunks = []; let size = 0;
+      for await (const chunk of req) { size += chunk.length; if (size > 63000) throw new NativeError('TOO_LARGE'); chunks.push(chunk); }
+      if (req.method === 'GET' && size) throw new NativeError('INVALID_REQUEST');
       let body;
-      if (request.method === 'POST') {
-        if (request.headers['content-type']?.split(';')[0] !== 'application/json') throw new NativeError('INVALID_REQUEST');
-        try { body = JSON.parse(text); } catch { throw new NativeError('INVALID_REQUEST'); }
+      if (req.method !== 'GET') {
+        if (req.headers['content-type']?.split(';')[0] !== 'application/json') throw new NativeError('INVALID_REQUEST');
+        try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw new NativeError('INVALID_REQUEST'); }
       }
-      if (route === 'GET /health') return send(response, 200, { ok: true, apiVersion: 1 });
-      if (route === 'GET /status') return send(response, 200, {
-        ok: true, apiVersion: 1, candidateRoot: root, requiredConfirmations: confirmations,
-        supportedVersions: versions, ...store.status(),
+      let result;
+      switch (route) {
+        case 'GET /health': result = { ok: true, apiVersion: 2 }; break;
+        case 'GET /snapshot': case 'GET /status': result = manager.snapshot(); break;
+        case 'GET /templates': result = manager.templates(); break;
+        case 'POST /reveal': result = manager.reveal(body); break;
+        case 'POST /preview': result = manager.preview(body); break;
+        case 'PATCH /config': result = manager.save(body); break;
+        case 'POST /undo-preview': result = manager.undoPreview(body); break;
+        case 'POST /migration-preview': result = manager.migrationPreview(body); break;
+        case 'POST /recover': result = manager.recover(body); break;
+        case 'POST /template-preview': result = manager.templatePreview(body); break;
+        case 'POST /user-templates': result = manager.saveUserTemplate(body); break;
+        case 'DELETE /user-templates': result = manager.deleteUserTemplate(body); break;
+        case 'GET /contributions': result = { ok: true, contributions: behaviorContributions({ root }), settings: readBehaviorSettings({ root }), diagnostics: [{ code: 'DUPLICATE_OBSERVABILITY_UNKNOWN', resource: null, reason: 'Standalone plugin contributions are not observable from this service.', nextAction: 'Check host contributions before enabling guard.' }] }; break;
+        case 'PATCH /settings':
+          if (!exactKeys(body, ['revision', 'claudeGuardEnabled', 'confirmEnable'], ['revision', 'claudeGuardEnabled'])) throw new NativeError('INVALID_REQUEST');
+          result = { ok: true, settings: updateBehaviorSettings({ root, ...body }), runtimeVerified: false }; break;
+      }
+      send(res, 200, result);
+    } catch (err) {
+      const known = new Set(['MIGRATION_REQUIRED', 'LEGACY_RECOVERY_REQUIRED', 'INVALID_REQUEST', 'TOO_LARGE', 'CONFIRMATION_REQUIRED', 'PROTECTED_FIELD', 'INVALID_VALUE', 'REVEAL_REQUIRED', 'INVALID_RESOURCE', 'STALE_REVISION', 'STALE_PREVIEW', 'CONFLICT', 'CAPACITY', 'LOCKED', 'BUSY', 'UNSAFE_PATH', 'RECOVERY_REQUIRED', 'NO_CHANGES', 'INVALID_JSONC', 'AMBIGUOUS_KEYS', 'UNKNOWN_TEMPLATE', 'INVALID_CONFIG', 'INVALID_PARAMETERS', 'PAYLOAD_CHANGED']);
+      const code = known.has(err.code) ? err.code : 'IO_FAILURE';
+      const diagnostic = manager.diagnostic(code, err.resource ?? null);
+      send(res, code === 'INVALID_REQUEST' ? 400 : code === 'TOO_LARGE' ? 413 : code === 'IO_FAILURE' ? 500 : 409, {
+        ok: false, error: { code, resource: err.resource ?? null, field: err.field ?? null, reason: code === 'CONFLICT' ? 'Only affected fields changed externally.' : diagnostic.reason, nextAction: code === 'BUSY' ? 'Inspect the dedicated behavior-settings lock locally; config recovery does not reclaim it.' : diagnostic.nextAction },
+        ...(err.conflicts ? { conflicts: err.conflicts } : {}),
       });
-      if (route === 'POST /recover') {
-        confirm(body);
-        store.recover();
-        return send(response, 200, { ok: true, state: store.status().state, runtimeVerified: false });
-      }
-      if (route.endsWith('/preview') || route.endsWith('/rollback-preview')) {
-        confirm(body);
-        return send(response, 200, store.preview(route.endsWith('/rollback-preview') ? 'rollback' : 'apply'));
-      }
-      if (!exact(body, ['previewId']) || typeof body.previewId !== 'string' || !/^[a-f0-9]{32}$/.test(body.previewId)) throw new NativeError('INVALID_REQUEST');
-      return send(response, 200, store.apply(body.previewId, route.endsWith('/rollback') ? 'rollback' : 'apply'));
-    } catch (error) {
-      const known = new Set(['INVALID_REQUEST', 'TOO_LARGE', 'CONFIRMATION_REQUIRED', 'UNSUPPORTED_VERSION', 'BLOCKED', 'DRIFT', 'STALE_PREVIEW', 'LOCKED', 'UNSAFE_PATH', 'RECOVERY_REQUIRED', 'SHADOWED', 'MISSING_MODEL', 'MISSING_TRANSPORT', 'INVALID_JSONC', 'AMBIGUOUS_KEYS', 'INVALID_OVERRIDES', 'INVALID_MANAGED_VALUE', 'PAYLOAD_CHANGED']);
-      const code = known.has(error.code) ? error.code : 'IO_FAILURE';
-      const status = code === 'INVALID_REQUEST' ? 400 : code === 'TOO_LARGE' ? 413 : code === 'IO_FAILURE' ? 500 : 409;
-      send(response, status, { ok: false, error: { code, message: code } });
     }
   });
   server.requestTimeout = 10000; server.headersTimeout = 5000; server.keepAliveTimeout = 1000; server.maxHeadersCount = 32;
   return server;
 }
 export function defaultRoot(env) {
-  if (!env.HOME || !path.isAbsolute(env.HOME) || (env.XDG_CONFIG_HOME && !path.isAbsolute(env.XDG_CONFIG_HOME))) throw new NativeError('BLOCKED');
-  // OPENCODE_CONFIG_DIR here is NOT evidence about the managed child process.
+  if (!env.HOME || !path.isAbsolute(env.HOME) || env.XDG_CONFIG_HOME && !path.isAbsolute(env.XDG_CONFIG_HOME)) throw new NativeError('UNSAFE_PATH');
   return path.join(env.XDG_CONFIG_HOME || path.join(env.HOME, '.config'), 'opencode');
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {

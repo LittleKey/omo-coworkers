@@ -37,7 +37,7 @@ test("root extension cold-loads offline without node_modules; optional installed
       assert.equal(folder, join(target, "openchamber/plugin"))
       const nested = JSON.parse(await fs.readFile(join(folder, "package.json"), "utf8"))
       assert.equal(nested.type, "module")
-      assert.equal(pkg.version, "6.0.0")
+      assert.equal(pkg.version, "6.1.0")
       assert.equal(nested.version, pkg.version)
       assert.equal(pkg.openchamber.engines.openchamber, ">=2.8.0")
       assert.equal(pkg.openchamber.contributes.panel.entry, "openchamber/panel/index.html")
@@ -49,8 +49,11 @@ test("root extension cold-loads offline without node_modules; optional installed
       await import(pathToFileURL(join(target, "openchamber/panel/vendor/host.js")))
       const switches = [undefined, "0", "false", "true", "1"].flatMap(writer =>
         [undefined, "0", "true", "1"].map(guard => [writer, guard]))
+      const fixtureHome = join(root, "home")
+      await fs.mkdir(fixtureHome, { mode: 0o700 })
+      await fs.mkdir(join(root, "tmp"))
       for (const [writerEnabled, enabled] of switches) {
-        const env = { ...process.env }
+        const env = { ...process.env, HOME: fixtureHome, XDG_CONFIG_HOME: join(fixtureHome, ".config"), TMPDIR: join(root, "tmp") }
         delete env.OMO_COWORKERS_ENABLE_WRITER_ROLE
         if (writerEnabled !== undefined) env.OMO_COWORKERS_ENABLE_WRITER_ROLE = writerEnabled
         delete env.OMO_COWORKERS_ENABLE_CLAUDE_GUARD

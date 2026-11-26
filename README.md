@@ -1,92 +1,106 @@
 # omo-coworkers
 
-**面向 OpenChamber 2.8.0+ 的扩展包（`v6.0.0`）：内置 OMO（`oh-my-opencode-slim`）原生配置显式预览/应用/恢复/条件回滚面板与本地宿主服务（接管原 `dotfiles/opencode` 的 7 份提示词与 10 个精选文本配置叶节点，不依赖 `dotfiles` 安装器）、三项通用协作技能、唯一冻结的 `document-writer` 上游角色载荷，以及两项默认关闭且相互独立的运行时钩子（旧版 `OMO_COWORKERS_ENABLE_WRITER_ROLE=1` 原生转换与 `OMO_COWORKERS_ENABLE_CLAUDE_GUARD=1` Claude 派发守卫）。**
+**面向 OpenChamber 2.8.0+ 的扩展包（`v6.1.0`）：内置 OMO（`oh-my-opencode-slim`）原生配置管理器面板与本地宿主服务（在 `v6.0.0` 接管原 `dotfiles/opencode` OMO 提示词与受管字段的基础上，以自动读取受保护结构快照、真实变更差异预览、同字段冲突检测与非冲突自动变基、5 族独立内置增强模板与用户模板、显式提示词揭露、条件撤销/恢复以及独立插件行为设置取代了 `v6.0.0` 的七项人工声明审批面板）、三项通用协作技能、唯一冻结的 `document-writer` 上游角色载荷，以及默认关闭的运行时钩子（`Claude guard` 与旧版 `writer-role` 运行时转换）。**
 
-*OpenChamber 2.8.0+ extension (`v6.0.0`) shipping explicit preview/apply/recover/conditional-rollback delivery for native OMO configuration (retiring the legacy `dotfiles/opencode` OMO write chain while preserving user-owned models, permissions, skills, and ACP transport settings), the three portable coworker skills, the single frozen upstream `document-writer` payload authority, and default-off legacy writer and Claude dispatch guard hooks.*
+*OpenChamber 2.8.0+ extension (`v6.1.0`) shipping the native OMO Config Manager, protected snapshots, differential edits, prompt reveal, recipe templates, conditional undo/recovery and separate behavior settings. Prompt previews may withhold personal text until deliberately revealed.*
 
-## `v6.0.0` 交付内容与所有权边界 (What `v6.0.0` ships & ownership split)
+## `v6.1.0` 交付内容与所有权边界 (What `v6.1.0` ships & ownership split)
 
-`omo-coworkers` 在 `4.0.0` 重构为仓库根级 OpenChamber 扩展（`panel.id: "omo-coworkers"`），在 `5.0.0` 移除旧版 `supervisor` 插件与 CLI，并在 **`6.0.0`** 将原本依赖 `dotfiles/opencode` 离线同步与激活的 OMO 原生定制内容迁入扩展内部，通过受控的本地宿主服务与中文操作面板直接交付：
+`omo-coworkers` 在 `4.0.0` 重构为仓库根级 OpenChamber 扩展（`panel.id: "omo-coworkers"`），在 `5.0.0` 移除旧版 `supervisor` 插件与 CLI，在 `6.0.0` 接管原 `dotfiles/opencode` 的 OMO 原生提示词与配置叶节点交付并退役 `dotfiles` 写入链，并在 **`6.1.0`** 将 `6.0.0` 的「七项声明 + 三项手填精确版本 + 仅哈希预览」审批面板升级为直接管理原生 OMO 文件的 **OMO 配置管理器（Config Manager，API v2）**：
 
-- **原生 OMO 配置显式预览、应用、中断恢复与条件回滚（`openchamber/native-config/` + `openchamber/service/` + `openchamber/panel/`）**：
-  - **接管的受管范围（7 份提示词 + 10 个文本叶节点）**：
-    - 7 个提示词文件（清单定义于 `openchamber/native-config/manifest.json`）：`oh-my-opencode-slim/orchestrator_append.md`、`oh-my-opencode-slim/oracle_append.md`、`oh-my-opencode-slim/explorer_append.md`、`oh-my-opencode-slim/designer_append.md`、`oh-my-opencode-slim/fixer_append.md`、`oh-my-opencode-slim/document-writer.md`（直接引用唯一冻结上游源 `openchamber/plugin/roles/document-writer.md`，不维护重复副本）与 `oh-my-opencode-slim/lark-operator.md`。
-    - `oh-my-opencode-slim.json` 或 `oh-my-opencode-slim.jsonc` 中的 10 个文本叶节点（定义于 `openchamber/native-config/fragments/leaves.json`）：`agents.document-writer.{description,orchestratorPrompt}`、`agents.lark-operator.{description,orchestratorPrompt}`、`acpAgents.antigravity.{prompt,description,orchestratorPrompt}` 与 `acpAgents.claude.{prompt,description,orchestratorPrompt}`。生成器通过内置 `jsonc-parser`（`3.3.1`）做最小 AST 局部修改，不执行全文件格式化，保留原有的注释、缩进与非受管字段。
-  - **严格保留用户自有配置（绝不覆盖个人模型、权限、传输或实时 `ask` 策略）**：
-    - 用户的 `model` / `inheritModelFrom`、`permissions`、`skills`、`mcps`、`presets`、ACP 传输命令（`acpAgents.{antigravity,claude}.command`、`args`、`cwd`、`env`）、`opencode.json` 以及宿主环境变量均不受扩展改写。
-    - 生成器要求候选配置中 `document-writer` 与 `lark-operator` 已配置 `model` 或 `inheritModelFrom`（否则报 `MISSING_MODEL` 拒绝），且 `acpAgents.antigravity` 与 `acpAgents.claude` 已配置非空 `command`（否则报 `MISSING_TRANSPORT` 拒绝）。
-    - 原 `dotfiles/opencode/oh-my-opencode-slim.json` 中的 `acpAgents.antigravity.permissionMode: "reject"` **未**迁入扩展默认值；用户本机实时配置中的 `permissionMode`（如 `"ask"`）原样保留。
-    - 用户可在 `<configRoot>/.omo-coworkers/overrides.jsonc` 中按白名单维护本地覆盖（仅限顶层键 `leaves`、`prompts`、`unmanaged`）。
-  - **安装、启动与更新零自动写入**：
-    - 安装扩展、启动宿主服务、刷新状态或生成预览（`POST /preview`、`POST /rollback-preview`）在文件系统上**完全只读**。
-    - 仅当操作者在面板中逐项勾选 **7 项必选环境与秘密声明**、手动填入匹配的 **已验证精确版本矩阵**（`omo: 3.0.8`、`opencode: 2.4.2`、`openchamber: 2.8.0`）、审阅 5 分钟有效期的单次哈希变更摘要（仅含 SHA-256 哈希，不暴露现有个人配置正文）并显式点击「确认应用」或「确认回滚」时，服务才对受管路径执行写入。
-    - 若上次写入中途异常中断留下 `.omo-coworkers/journal.json`，状态进入 `recovery-required` 并阻止一切预览与应用；仅能通过面板显式勾选磁盘写入确认并点击「确认恢复中断写入」（`POST /recover`）按日志有条件还原受管项，状态查询与预览绝不隐式触发恢复。
-- **旧 `dotfiles/opencode` OMO 写入链正式退役交接**：
-  - `dotfiles/opencode/runtime/profile.json` 已将 `oh-my-opencode-slim.json`、`oh-my-opencode-slim.jsonc` 与 `oh-my-opencode-slim/**` 标记为 `ownership.status: "retired"`（`historicalInputsOnly: true`）。
-  - `dotfiles/opencode/runtime/lib/{ownership,activate,writer-role-update}.mjs` 已启用代码层硬围栏：凡候选清单、当前 authority 记录、纳管路径集或回滚记录涉及上述已移交路径，`oprofile plan-activation`、`oprofile activate`（含 `--replace`）、`oprofile adopt`、`oprofile rollback` 以及 `update-writer-role.mjs` 均在任何写入或源 Git 读取前整条工作流拒绝（无绕过开关）。`dotfiles/opencode` 中保留的文件与 `oprofile stage` 仅作离线历史暂存（staging）与个人模型/权限/技能参考。
-- **三项通用协作技能 (`contributes.skills: "skills"`)**：
-  - 原样提供 `skills/maintaining-product-engineering-docs`、`skills/domain-modeling` 与 `skills/humanizer`；不内置任何 `lark-*` 或项目私有技能。
-- **唯一冻结的 `document-writer` 上游语义载荷与默认关闭的旧版运行时转换 (`openchamber/plugin/roles/` & `OMO_COWORKERS_ENABLE_WRITER_ROLE=1`)**：
-  - `openchamber/plugin/roles/{document-writer.md,routing.json,audience.md,oracle-line.txt}` 保持冻结 SHA-256 不变，其中 `document-writer.md` 同时作为原生配置生成器的唯一引用源。
-  - `openchamber/plugin/index.mjs` 中的 `setupWriterRole(ctx)`（`openchamber/plugin/writer-role.mjs`）默认关闭，仅在宿主进程环境显式设置 `process.env.OMO_COWORKERS_ENABLE_WRITER_ROLE === "1"` 时注册运行时 `ctx.agent.transform`。**使用 `v6.0.0` 原生配置交付时，必须保持 `OMO_COWORKERS_ENABLE_WRITER_ROLE` 未设置（关闭）**。
-- **默认关闭、相互独立的 Claude 派发守卫 (`OMO_COWORKERS_ENABLE_CLAUDE_GUARD=1`)**：
-  - `openchamber/plugin/index.mjs` 仅在宿主进程环境设置 `process.env.OMO_COWORKERS_ENABLE_CLAUDE_GUARD === "1"` 时启用 `plugins/claude-advisor/index.js`；与原生配置服务及 `OMO_COWORKERS_ENABLE_WRITER_ROLE` 完全独立。独立部署入口 `plugins/claude-advisor/index.js`（v2）与 `plugins/claude-advisor/index.v1.mjs`（v1）原样保留。
-- **`4.0.0`–`6.0.0` 历史移除边界**：
-  - `5.0.0` 已移除 `plugins/supervisor/`、`bin/supervisor-memory.mjs` 及 `docs/supervisor-*`；`4.0.0` 已移除 `3.x` CLI 安装器（`bin/coworkers-install.mjs` / `dw-install`、`installer/`、根目录 `oh-my-opencode-slim.json` 覆盖层与 `prompts/`）。扩展安装或升级不会自动删除外部记忆目录（如 `~/.local/share/opencode-supervisor/memory/`）或 `3.x` 历史遗留文件。
+- **OMO 原生配置管理器（`openchamber/native-config/{manager,templates,generator,transaction}.mjs` + `openchamber/service/` + `openchamber/panel/`）**：
+  - **打开即读受保护结构快照，无七项声明或手填精确版本门槛（`GET /snapshot`）**：
+    - 面板连接本地服务后自动发现并读取默认候选配置根（`$XDG_CONFIG_HOME/opencode` 或 `~/.config/opencode`）下的 `oh-my-opencode-slim.jsonc` / `oh-my-opencode-slim.json`（`.jsonc` 与 `.json` 并存时按原生优先级选择 `.jsonc` 并给出 `SHADOWED` 诊断，不再整库锁定）及 `oh-my-opencode-slim/**/*.md` 提示词文件。
+    - 服务端将字段分为 `ordinary`（普通可编辑字段）、`prompt`（提示词文本）与 `protected`（受保护字段）：普通字段返回当前值；提示词与受保护字段（基于启发式规则识别已知敏感键名 `env`/`headers`/`authorization`/`apiKey`/`token`/`secret`/`password`/`credentials`/`provider`/`mcpServers`、已知凭据/令牌特征值如 `{env:...}`、`Bearer`/`Basic`、`-----BEGIN`、`sk-`/`ghp_`/`github_pat_`/`xox*-`、含内嵌凭据的 URL 或查询参数，以及未在 `openchamber/native-config/schema/omo-3.0.8.json` 与 `contextKnown` 中同时登记的结构）仅返回 `{ "protected": true, "placeholder": "<hash>" }` 占位符，不向浏览器发送原始 JSONC 全文/注释，也不展开环境变量；**注意：启发式规则无法识别被伪装成普通文本并写入普通可编辑字段的任意自定义秘密**。
+    - 由 `openchamber/native-config/manager.mjs` 与 `openchamber/native-config/schema/omo-3.0.8.json` 共同认定的可编辑 `ordinary` 字段包括：顶层 `preset` 与 `autoUpdate`、`presets.<preset>.extends`、`agents.<agent>.*`（及 `presets.<preset>.agents.<agent>.*`）下的 `model`、`variant`、`inheritModelFrom`（`"session"` | `"orchestrator"`）、`temperature`（`0`–`2`）、`skills`、`skills_add`、`skills_remove`、`skills_include_local`、`mcps`、`permission`（`"ask"` | `"allow"` | `"deny"` 或 `permission.<tool>` 叶节点），以及 `acpAgents.<agent>.*` 下的 `command`、`args`、`cwd`、`wrapperModel`、`timeoutMs`（整数毫秒）、`permissionMode`（`"ask"` | `"allow"` | `"reject"`）。「高级 · 完整受保护结构与新增字段」视图仅展示受保护结构投影并提交单字段差量操作（每次 1–32 项修改，请求体上限 63,000 UTF-8 字节），**不是原始全文 JSONC 编辑器，也不允许回写整份投影或任意未分类 schema 结构**。
+  - **提示词按需显式揭露与编辑（`POST /reveal`）**：
+    - 角色/ACP 内联提示词字段（`prompt`、`appendPrompt`、`orchestratorPrompt`、`description`）与 `oh-my-opencode-slim/**/*.md` 提示词资源默认不传输正文；仅当操作者在当前服务会话中针对具体资源/字段点击「查看并编辑这段提示词」（`POST /reveal`，需 `confirm: true` 且通过服务端无敏感模式核查；若命中敏感特征则以 `409 PROTECTED_FIELD` 拒绝）后才返回正文并允许加入草稿（未揭露直接提交修改会报 `409 REVEAL_REQUIRED`）。
+  - **5 族独立内置增强模板与有界用户模板（`GET /templates`、`POST /template-preview`、`POST /user-templates`、`DELETE /user-templates`）**：
+    - 原 `6.0.0` 捆绑应用的 7 份提示词与 10 个文本叶节点在 `6.1.0` 中拆分为 **5 族按需独立组合的内置模板**（`openchamber/native-config/templates.mjs`，仍以 `manifest.json`、`fragments/leaves.json`、`prompts/` 及唯一冻结源 `openchamber/plugin/roles/document-writer.md` 为单一事实来源）：
+      1. `document-role`（`document-writer` 角色提示词与路由描述，可选参数 `inheritModelFrom`；仅检查 `document-writer` 的 `MISSING_MODEL` 前置提示，不要求配置无关的 `lark-operator` 或 ACP 传输）；
+      2. `lark-role`（`lark-operator` 角色提示词与路由描述，可选参数 `inheritModelFrom`；仅检查 `lark-operator` 的 `MISSING_MODEL` 前置提示）；
+      3. `collaboration`（按所选 `agents` 子集独立生成 `orchestrator`、`oracle`、`explorer`、`designer`、`fixer` 的 `*_append.md` 协作提示词，无模型或 ACP 前置门槛）；
+      4. `claude-acp-guidance`（`acpAgents.claude` 的 `prompt`/`description`/`orchestratorPrompt`，仅提示 `claude` 的 `MISSING_TRANSPORT`）；
+      5. `antigravity-acp-guidance`（`acpAgents.antigravity` 的 `prompt`/`description`/`orchestratorPrompt`，仅提示 `antigravity` 的 `MISSING_TRANSPORT`；绝不导入旧 `dotfiles` 中的 `permissionMode: "reject"`）。
+    - **模板是配方**：匹配内容返回 `NO_CHANGES`，不建立长期所有权或收据。不同的个人值默认冲突；仅在面板逐项勾选愿意替换的资源与字段后重新预览。没有永久按模板移除或自动恢复首次状态的承诺。
+    - 角色模板的 `inheritModelFrom` 可选 `session` 或 `orchestrator`，不要求对应 `agents` 条目，也不覆盖已有个人模型或继承设置。
+    - **我的模板**：可复制内置配方及参数的引用，或从普通安全字段创建（排除提示词、命令、路径与受保护字段）；创建和删除均须先预览再保存，最多 20 个。
+  - **统一预览、保存、撤销与恢复**：普通编辑、配方、用户模板增删及撤销先预览，再通过 `PATCH /config` 保存；风险变更须确认。普通字段展示前后值；提示词在同一有效快照中显式揭露后可显示前后正文，否则旧个人正文仅显示摘要，公开配方目标正文可显示。`beforeExists` / `afterExists` 区分不存在与未揭露，揭露授权仅存在内存。
+    - 最近 **10** 次变更可条件撤销，无七天期限；低频操作时历史文本可能保存更久，受字节上限和冲突限制，不保证无限重做。`manager-state.json`（format 3）先记录 pending，再写原生文件并提交最终状态；跨文件不原子，显式恢复遇到第三种值会停止。
+    - 启动和读取不迁移旧状态。迁移前停止旧写入者；存在旧收据须单独确认放弃长期撤回能力。未完成旧 journal 阻止迁移，需按旧版流程处理；旧文件保留，新状态建立后是唯一权威，损坏时不能回退旧状态继续写。
+- **独立 CAS 行为设置与随扩展贡献内容视图（`GET /contributions`、`PATCH /settings`、`openchamber/plugin/behavior-settings.mjs`）**：
+  - 面板「扩展内容」页清晰区分「随包声明贡献」「行为设置已开启」与「运行中宿主实际已加载（`runtimeConfirmed: false`）」。
+  - `Claude guard` 开关持久化于 `<configRoot>/.omo-coworkers/behavior.json`（`version: 1`，存储 `claudeGuardEnabled: boolean` 与 `writerTransformEnabled: false`；`readBehaviorSettings()` 仅接受 `writerTransformEnabled` 缺省或为 `false`，并在 `source: "settings"` 下始终返回计算值 `writerTransformEnabled: false`），由专用排他锁 `.omo-coworkers/behavior.lock` 与 SHA-256 `revision` CAS 原子更新保护，**独立于配置事务的 WAL 日志、条件撤销与恢复**（若遇 `409 BUSY` 需单独检查 `behavior.lock`，配置恢复不会清理行为锁）。
+  - **严格优先级与失败关闭（Fail-Closed）**：插件冷加载时默认全部关闭；若 `.omo-coworkers/behavior.json` 存在（`source: "settings"`），**文件设置优先于环境变量**；仅当 `behavior.json` **不存在**（`ENOENT`）时，才回退读取旧版精确进程环境变量 `OMO_COWORKERS_ENABLE_CLAUDE_GUARD=1` 与 `OMO_COWORKERS_ENABLE_WRITER_ROLE=1`（`source: "legacy-environment"`）。若 `behavior.json` 损坏、超过 4096 字节或路径不安全（如符号链接/多硬链接），立即失败关闭（两项钩子均为 `false`，`source: "blocked"`）。
+  - **独立插件重复可见性边界（`DUPLICATE_OBSERVABILITY_UNKNOWN`）**：本地服务无法直接观测宿主是否同时加载了独立部署的 `plugins/claude-advisor`（`duplicateObservation: "unknown"`；未报告重复**不等于**不存在重复），因此在面板开启 `Claude guard` 前必须勾选单次风险与重复核对确认（`confirmEnable: true`）。
+- **旧 `dotfiles/opencode` OMO 写入链保持退役**：
+  - `dotfiles/opencode/runtime/profile.json`（`ownership.status: "retired"`, `historicalInputsOnly: true`）与 `dotfiles/opencode/runtime/lib/{ownership,activate,writer-role-update}.mjs` 的代码层硬围栏保持不变：凡触及 `oh-my-opencode-slim.json(c)` 或 `oh-my-opencode-slim/**`，`oprofile plan-activation`、`activate`（含 `--replace`）、`adopt`、`rollback` 及 `update-writer-role.mjs` 均在写入前整条工作流拒绝。
+- **三项通用协作技能 (`contributes.skills: "skills"`) 与唯一冻结 `document-writer` 上游载荷 (`openchamber/plugin/roles/`)**：
+  - 原样提供 `skills/maintaining-product-engineering-docs`、`skills/domain-modeling` 与 `skills/humanizer`；`openchamber/plugin/roles/{document-writer.md,routing.json,audience.md,oracle-line.txt}` 保持冻结 SHA-256 不变。
+- **`4.0.0`–`5.0.0` 历史移除边界**：
+  - `5.0.0` 已移除 `plugins/supervisor/`、`bin/supervisor-memory.mjs` 及 `docs/supervisor-*`；`4.0.0` 已移除 `3.x` CLI 安装器（`coworkers-install` / `dw-install`、`installer/`、根目录 `oh-my-opencode-slim.json` 覆盖层与 `prompts/`）。扩展安装或升级不会自动删除外部记忆目录或历史遗留文件。
 
-## 仓库结构 (`v6.0.0` Layout)
+## 仓库结构 (`v6.1.0` Layout)
 
 ```text
-package.json               根级 OpenChamber 2.8.0+ 扩展清单 (v6.0.0; panel/service/skills/opencodePlugin)
+package.json               根级 OpenChamber 2.8.0+ 扩展清单 (v6.1.0; panel/service/skills/opencodePlugin)
 openchamber/
   panel/
-    index.html             OMO 原生配置面板入口页面 (中文 UI，无外部脚本或预勾选)
-    panel.css              面板样式表
-    app.js                 面板状态展示、确认门控、哈希预览、应用/条件回滚/显式恢复交互逻辑
-    model.js               版本矩阵 (3.0.8 / 2.4.2 / 2.8.0)、7 项声明校验、有限 SDK 路由与预览时效判断
+    index.html             OMO 配置管理器入口页面 (中文 UI：配置 / 增强模板 / 扩展内容 / 变更记录)
+    panel.css              面板响应式样式表
+    app.js                 受保护结构快照编辑、提示词显式揭露、模板组合、行为设置与撤销/恢复交互逻辑
+    model.js               API v2 有限路由白名单、63,000 字节上限、1–32 项安全差量校验与预览时效判断
     vendor/                本地 vendored @openchamber/sdk 2.8.0 浏览器 host.js 最小导入闭包及 MIT 许可说明
   service/
-    main.mjs               宿主本地 loopback HTTP 服务 (Bearer 鉴权、16 KiB 上限、7 条有限路由、默认候选根计算)
+    main.mjs               宿主本地 loopback HTTP 服务 (API v2、Bearer 鉴权、63,000 字节上限、有限路由)
+    behavior-settings.mjs  独立 CAS 行为设置更新器 (.omo-coworkers/behavior.json 与专用 behavior.lock)
   native-config/
-    manifest.json          v6.0.0 原生配置清单：精确兼容矩阵、7 份提示词输出路径与 SHA-256 校验值
-    fragments/leaves.json  oh-my-opencode-slim.json(c) 的 10 个受管文本叶节点定义
+    manager.mjs            ConfigManager：安全路径/内部链接核查、字段分类投影、提示词揭露、差量变基、条件撤销与配方事务
+    recipe-state.mjs       format 3 状态、预览、提交、撤销、迁移与恢复
+    recipe-intents.mjs     模板与用户配方差量编译
+    templates.mjs          5 族独立内置增强模板 (listTemplates / composeTemplate) 与按需前置依赖提示
+    manifest.json          内置提示词来源清单与 SHA-256 校验值 (7 份提示词)
+    fragments/leaves.json  内置角色与 ACP 指导文本叶节点定义 (10 个叶节点)
     prompts/               6 份迁入的提示词源文件 (*_append.md 与 lark-operator.md；document-writer.md 复用 ../plugin/roles/)
-    generator.mjs          纯函数 JSONC AST 校验与最小局部编辑、模型/传输前置检查、遮蔽拒绝、三路受管漂移检测
-    transaction.mjs        NativeStore：安全路径/权限/链接核查、单次 5 分钟预览、排他锁、WAL 日志、条件恢复与条件回滚
+    generator.mjs          JSONC AST 解析与无格式化局部编辑、旧版兼容编译器与错误定义
+    transaction.mjs        NativeStore 底层安全路径/私有祖先权限核查、排他锁、原子写等复用底层原语
     schema/                本地拷贝的官方 oh-my-opencode-slim 3.0.8 schema 与来源校验记录 (PROVENANCE.md)
     vendor/jsonc-parser/   本地 vendored Microsoft jsonc-parser 3.3.1 UMD 实现与 MIT 许可 (零外部 npm 依赖)
   plugin/
-    package.json           嵌套 ESM 插件清单 (omo-coworkers-openchamber-plugin v6.0.0)
-    index.mjs              OpenChamber V2 插件入口 (两项运行时钩子默认关闭，仅受精确进程环境变量 "1" 控制)
+    package.json           嵌套 ESM 插件清单 (omo-coworkers-openchamber-plugin v6.1.0)
+    index.mjs              OpenChamber V2 插件入口 (通过 readBehaviorSettings 读取默认关闭的行为设置及旧版环境变量回退)
+    behavior-settings.mjs  零依赖安全行为设置读取器 (默认关闭、文件优先于旧环境变量、异常失败关闭)
     writer-role.mjs        旧版可选运行时 ctx.agent.transform 加载器与 SHA-256 校验器
     roles/                 4 份冻结上游 document-writer 语义载荷 (document-writer.md, routing.json, audience.md, oracle-line.txt)
 skills/                    3 项通用技能目录：maintaining-product-engineering-docs, domain-modeling, humanizer
 plugins/
   claude-advisor/          无状态 Claude 派发守卫 (guard.mjs, index.js, index.v1.mjs, guard.test.mjs, README.md)
 test/
-  native-config-generator.test.mjs    原生生成器 AST 编辑、前置条件、覆盖白名单、遮蔽与漂移单元测试
-  native-config-transaction.test.mjs  事务存储锁、故障注入、条件恢复、跨升级基线保留与安全路径单元测试
-  native-config-service.test.mjs      本地服务鉴权、确认契约、有限路由与显式 /recover 接口测试
-  native-config-parity.test.mjs       隔离子进程调用真实安装的 OMO 3.0.8 加载器验证 schema 与 7 份提示词字节一致性
-  native-panel.test.mjs               面板确认门控、路由白名单、预览过期与无不安全 DOM/无预勾选静态检查
-  openchamber-package.test.mjs        发布白名单搬迁、零 node_modules、OpenChamber 2.8.0 真解析器及 20 组合插件冷加载测试
+  native-config-manager.test.mjs      配置管理器受保护投影、揭露、差量变基/冲突、配方、撤销与故障注入测试
+  native-templates.test.mjs           5 族独立内置模板组合、前置依赖、个人值保留与来源保真测试
+  native-behavior.test.mjs            行为设置默认关闭、优先级、CAS 锁冲突、失败关闭与插件冷加载测试
+  native-config-service.test.mjs      本地服务 API v2 鉴权、路由白名单、请求体上限与恢复门控测试
+  native-config-generator.test.mjs    底层 JSONC AST 编辑与旧版生成器兼容测试
+  native-config-transaction.test.mjs  底层事务存储、权限边界与旧版恢复兼容测试
+  native-config-parity.test.mjs       隔离子进程调用真实安装的 OMO 3.0.8 加载器验证 schema 与提示词读取一致性
+  native-panel.test.mjs               面板 API v2 路由、受保护占位拦截、草稿/预览门控与静态安全检查
+  openchamber-package.test.mjs        发布白名单搬迁、零 node_modules、OpenChamber 2.8.0 真解析器及插件加载测试
   writer-role.test.mjs                旧版可选 writer-role 运行时转换单元测试
 README.md / INSTALL.md / SOURCES.md / LICENSE
 ```
 
 ## 环境要求、交付阶段与安全边界 (Requirements, Delivery Stages & Boundaries)
 
-- **严格区分各交付阶段（源码修改 ≠ Git 提交 ≠ 扩展安装/更新 ≠ 本地服务授权 ≠ 面板显式写入 ≠ 宿主手动重启 ≠ 运行时核验）**：
+- **严格区分各交付阶段（源码修改 ≠ Git 提交 ≠ 扩展安装/更新 ≠ 本地服务授权 ≠ 面板保存/行为设置更新 ≠ 宿主手动重载 ≠ 运行时核验）**：
   - 修改或提交本仓库不会自动更新已安装的 OpenChamber 扩展，也不会自动改写 `~/.config/opencode`。
-  - 在 OpenChamber 中安装或更新本扩展仅部署扩展代码、面板、服务入口与三项通用技能；**扩展安装、宿主启动、服务启动或刷新状态均不写入任何原生 OMO 配置文件**。
-  - OpenChamber 仅通过对比远端根 `package.json` 的更高 semver `version` 检测扩展更新（结果缓存 1 小时，需用户在宿主 UI 手动点击应用更新）；扩展更新后，已写入磁盘的原生配置不会自动同步，需再次通过面板预览并确认应用。
-- **宿主本地服务权限边界（`runtime: "host"` 并非沙箱）**：
-  - `contributes.service`（`openchamber/service/main.mjs`）由宿主 Node 直接在本地回环端口拉起，拥有当前操作系统用户的**完整宿主 Node 权限，不是操作系统文件沙箱**。
-  - 用户必须在确认信任后，于 OpenChamber `设置 → 扩展`（`Settings → Extensions`）中单独批准本地服务权限。
-  - 宿主仅向扩展服务传递受限环境变量白名单（`HOME`、`XDG_CONFIG_HOME`、`PATH` 等），扩展服务**无法观测**宿主或托管 OpenCode 子进程的实际 `OPENCODE_CONFIG_DIR`、`OPENCODE_CONFIG`、`OMO_COWORKERS_ENABLE_*`、登录 shell 快照、`service.json` 或存储的用户变量，也**无权调用**宿主 `/api/config/reload` 自动重启 OpenCode。因此候选配置根仅支持本机默认路径（`$XDG_CONFIG_HOME/opencode` 或 `~/.config/opencode`），不支持自定义配置根或外部 OpenCode 服务器，且环境无遮蔽与精确版本（`OMO 3.0.8` / `OpenCode 2.4.2` / `OpenChamber 2.8.0`）必须由操作者核实后显式声明。
-- **备份范围、非跨文件原子性与卸载留存边界**：
-  - `<configRoot>/.omo-coworkers/`（含 `lock`、`journal.json`、`state.json` 及可选的 `overrides.jsonc`）**仅记录受管提示词与受管叶节点变更前后的值**，不是 `oh-my-opencode-slim.json(c)`、`opencode.json` 或整个配置目录的完整个人配置备份。操作者必须在应用前确认即将接管的现有受管值不含密钥或令牌（`managedBeforeValuesContainNoSecrets`）。
-  - 单文件写入通过同目录临时文件 + `fsync` + `rename` 原子替换，但**跨多个文件的写入不是原子事务**；中途异常中断会保留 `journal.json` 并进入 `recovery-required` 状态，需通过面板显式执行恢复（`POST /recover`）。
-  - 卸载或禁用扩展仅移除扩展包与贡献的技能/插件钩子，**不会删除或回滚** `<configRoot>` 中已写入的原生 OMO 配置文件，也**不会删除** `<configRoot>/.omo-coworkers/` 目录。
+  - 在 OpenChamber 中安装或更新本扩展会将扩展文件部署至 OpenChamber 的扩展目录，但**对 `~/.config/opencode` 下的受管原生 OMO 配置（`oh-my-opencode-slim.json(c)`、`oh-my-opencode-slim/**` 及 `.omo-coworkers/**`）不做任何自动写入**；宿主启动、服务启动、自动读取快照（`GET /snapshot`）或生成差异预览（`POST /preview`、`POST /template-preview`）在文件系统上均只读。
+  - 面板声明了随包插件与技能贡献，**不等于**运行中宿主已加载该行为，也**不等于** `Claude guard` 已启用（`Claude guard` 默认关闭，且修改 `.omo-coworkers/behavior.json` 后需通过宿主 UI 手动重载 OpenCode 才会在新会话生效）。
+- **宿主本地服务权限与默认候选配置根边界（`runtime: "host"` 并非沙箱）**：
+  - `contributes.service`（`openchamber/service/main.mjs`）由宿主 Node 直接在本地回环端口拉起，拥有当前操作系统用户的**完整宿主 Node 权限，不是操作系统文件沙箱**；用户必须在 OpenChamber `设置 → 扩展`（`Settings → Extensions`）中单独批准本地服务权限。
+  - 宿主仅向扩展服务传递 `HOME`、`XDG_CONFIG_HOME`、`PATH` 等基础环境变量白名单，扩展服务**无法观测**宿主或托管 OpenCode 子进程的实际 `OPENCODE_CONFIG_DIR`、`OPENCODE_CONFIG`、`OH_MY_OPENCODE_SLIM_PRESET`、项目级 `.opencode/oh-my-opencode-slim*` 覆盖或外部服务器状态，也**无权自动重启** OpenCode。因此 P0 仅管理本机默认候选目录（`$XDG_CONFIG_HOME/opencode` 或 `~/.config/opencode`，不支持自定义配置根）；快照含 `CUSTOM_ROOT_UNAVAILABLE` 与 `RUNTIME_UNCONFIRMED` 提示，面板以范围说明呈现。磁盘已保存状态（`saved-pending-reload`）不代表运行中实例已确认生效（`runtimeVerified: false`）。
+- **路径安全、非整份配置备份与卸载留存边界**：
+  - 管理器支持私有同 UID 祖先目录（`0700`）保护下的常规文件权限（如 `0775`/`0664`）及指向配置根内部的符号链接（解析并校验目标仍在根内，保留逻辑链接且不执行 `chmod`），但**拒绝指向配置根外部的符号链接、共享可写非私有祖先目录或多硬链接文件（`UNSAFE_PATH`）**。
+  - `<configRoot>/.omo-coworkers/manager-state.json` 保存用户配方、最近十次撤销与 pending；`behavior.json` 独立保存行为设置。旧状态文件保留但不再作为新状态权威；这些文件不是完整个人配置备份。
+  - 单文件写入通过同目录临时文件 + `fsync` + `rename` 原子替换，但**跨多个文件的写入不是原子事务**（可经 `POST /recover` 按日志有条件恢复）。卸载或禁用扩展**不会删除或回滚** `<configRoot>` 中已保存的原生配置文件或 `<configRoot>/.omo-coworkers/` 目录。
 
-详细安装、从 `dotfiles/opencode` 交接、面板预览/应用/条件回滚/中断恢复、故障排查与运行时核验步骤见 [INSTALL.md](INSTALL.md)；当前 `v6.0.0` 载荷哈希、vendored 组件来源及 `1.x`–`5.0.0` 历史溯源记录见 [SOURCES.md](SOURCES.md)。
+详细安装、从 `dotfiles/opencode` 或 `v6.0.0` 升级、配置管理器日常操作（普通字段编辑、提示词显式揭露、5 族内置模板与我的模板、行为设置、条件撤销与中断恢复）、故障排查与运行时核验步骤见 [INSTALL.md](INSTALL.md)；当前 `v6.1.0` 模块来源、冻结载荷哈希及 `1.x`–`6.0.0` 历史溯源记录见 [SOURCES.md](SOURCES.md)。

@@ -3,98 +3,102 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { createService, defaultRoot, confirmations, versions } from '../openchamber/service/main.mjs';
-import { NativeStore } from '../openchamber/native-config/transaction.mjs';
-test('finite authenticated API, explicit attestations, no startup writes', async t => {
-  let calls = 0;
-  const store = { status: () => ({ state: 'not-applied', runtimeVerified: false }), preview: kind => { calls++; return { ok: true, kind }; }, apply: () => { calls++; return { ok: true }; } };
-  const token = 'a'.repeat(48), server = createService({ token, root: '/candidate/opencode', store });
+import { createService, defaultRoot } from '../openchamber/service/main.mjs';
+import { ConfigManager } from '../openchamber/native-config/manager.mjs';
+
+function fixture(t) {
+  const base = path.resolve('.opencode/work/validation');
+  fs.mkdirSync(base, { recursive: true });
+  const root = fs.mkdtempSync(path.join(base, 'service-api2-'));
+  fs.chmodSync(root, 0o700);
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const file = path.join(root, 'oh-my-opencode-slim.jsonc');
+  fs.writeFileSync(file, '{"agents":{"writer":{"model":"test/old"}}}', { mode: 0o600 });
+  return { root, file, manager: new ConfigManager(root) };
+}
+async function serve(t, root, manager) {
+  const token = 'a'.repeat(48), server = createService({ token, root, manager });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise(resolve => server.close(resolve)));
-  const url = `http://127.0.0.1:${server.address().port}`;
-  const request = (route, body, auth = true) => fetch(url + route, { method: body === undefined ? 'GET' : 'POST', headers: { ...(auth ? { authorization: `Bearer ${token}` } : {}), 'content-type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
-  assert.equal(calls, 0);
-  assert.equal((await request('/health', undefined, false)).status, 401);
+  return (route, body, { auth = true, method = body === undefined ? 'GET' : 'POST' } = {}) => fetch(`http://127.0.0.1:${server.address().port}${route}`, {
+    method, headers: { ...(auth ? { authorization: `Bearer ${token}` } : {}), 'content-type': 'application/json' },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+}
+function diskSnapshot(directory) {
+  return Object.fromEntries(fs.readdirSync(directory).sort().map(name => {
+    const full = path.join(directory, name), stat = fs.lstatSync(full);
+    return [name, stat.isDirectory() ? diskSnapshot(full) : { bytes: fs.readFileSync(full).toString('base64'), mode: stat.mode, ino: stat.ino, mtime: stat.mtimeMs }];
+  }));
+}
+const op = value => ({ resourceId: 'config', field: ['agents', 'writer', 'model'], action: 'set', value });
+test('API2 finite authenticated routes; startup/status/preview read-only; no arbitrary bytes', async t => {
+  const { root, manager } = fixture(t), before = diskSnapshot(root);
+  const request = await serve(t, root, manager);
+  assert.deepEqual(diskSnapshot(root), before);
+  for (const route of ['/health', '/status', '/snapshot', '/templates', '/contributions']) assert.equal((await request(route, undefined, { auth: false })).status, 401);
   assert.equal((await request('/health')).status, 200);
-  assert.equal((await request('/status')).status, 200);
+  const snap = await (await request('/status')).json();
+  assert.equal(snap.runtimeVerified, false);
   assert.equal((await request('/arbitrary')).status, 404);
-  assert.equal((await request('/preview', {})).status, 409);
-  const confirmed = { confirmations: { ...Object.fromEntries(confirmations.map(k => [k, true])), versions } };
-  assert.equal((await request('/preview', confirmed)).status, 200);
-  assert.equal((await request('/preview', { ...confirmed, path: '/escape' })).status, 409);
-  assert.equal((await request('/apply', { previewId: 'x', bytes: 'bad' })).status, 400);
-  assert.equal((await request('/apply', { previewId: 'a'.repeat(32), huge: 'x'.repeat(17000) })).status, 413);
-  assert.equal(calls, 1);
+  assert.equal((await request('/preview', {})).status, 400);
+  const preview = await (await request('/preview', { revision: snap.revision, operations: [op('test/new')] })).json();
+  assert.ok(preview.previewId);
+  assert.deepEqual(diskSnapshot(root), before);
+  assert.equal((await request('/preview', { revision: snap.revision, operations: [op('test/new')], path: '/escape' })).status, 400);
+  assert.equal((await request('/config', { previewId: preview.previewId, bytes: 'bad' }, { method: 'PATCH' })).status, 400);
+  assert.equal((await request('/config', { huge: 'x'.repeat(64000) }, { method: 'PATCH' })).status, 413);
+  assert.deepEqual(diskSnapshot(root), before);
+  assert.equal((await request('/config', { previewId: preview.previewId }, { method: 'PATCH' })).status, 200);
+  assert.equal((await request('/apply', {})).status, 404);
 });
 test('default candidate ignores service OPENCODE_CONFIG_DIR; invalid home fails closed', () => {
   assert.equal(defaultRoot({ HOME: '/isolated', OPENCODE_CONFIG_DIR: '/not-evidence' }), '/isolated/.config/opencode');
   assert.throws(() => defaultRoot({ HOME: 'relative' }));
+  assert.throws(() => defaultRoot({ HOME: '/isolated', XDG_CONFIG_HOME: 'relative' }));
 });
-test('journal blocks both previews without disk writes; only attested explicit recover mutates', async t => {
-  const base = path.resolve('.opencode/work/validation');
-  fs.mkdirSync(base, { recursive: true });
-  const root = fs.mkdtempSync(path.join(base, 'service-recovery-'));
-  fs.chmodSync(root, 0o700);
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  fs.writeFileSync(path.join(root, 'oh-my-opencode-slim.jsonc'), JSON.stringify({
-    agents: { 'document-writer': { model: 'test/writer' }, 'lark-operator': { model: 'test/operator' } },
-    acpAgents: { antigravity: { command: 'fake' }, claude: { command: 'fake' } },
-  }), { mode: 0o600 });
-  let interrupted = true;
-  const store = new NativeStore(root, { inject: event => { if (interrupted && event === 'after-file') throw new Error('interrupted'); } });
-  assert.throws(() => store.apply(store.preview().previewId), /RECOVERY_REQUIRED/);
-  interrupted = false;
-  function diskSnapshot(directory = root) {
-    return Object.fromEntries(fs.readdirSync(directory).sort().map(name => {
-      const full = path.join(directory, name), stat = fs.lstatSync(full);
-      return [name, stat.isDirectory() ? diskSnapshot(full) : { bytes: fs.readFileSync(full).toString('base64'), mode: stat.mode, ino: stat.ino, mtime: stat.mtimeMs }];
-    }));
-  }
-  const token = 'b'.repeat(48), server = createService({ token, root, store });
-  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  t.after(() => new Promise(resolve => server.close(resolve)));
-  const request = (route, body) => fetch(`http://127.0.0.1:${server.address().port}${route}`, {
-    method: body === undefined ? 'GET' : 'POST',
-    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  });
-  const confirmed = { confirmations: { ...Object.fromEntries(confirmations.map(k => [k, true])), versions } };
-  const before = diskSnapshot();
-  assert.equal((await request('/status')).status, 200);
-  assert.equal((await request('/preview', confirmed)).status, 409);
-  assert.equal((await request('/rollback-preview', confirmed)).status, 409);
-  assert.deepEqual(diskSnapshot(), before);
+test('pending WAL reads/previews never recover; only confirmed recovery mutates and managed drift refuses', async t => {
+  const { root, file, manager } = fixture(t);
+  const snap = manager.snapshot(), p = manager.preview({ revision: snap.revision, operations: [op('test/new')] });
+  manager.files.inject = event => { if (event === 'after-file') throw Error('private interruption'); };
+  assert.throws(() => manager.save({ previewId: p.previewId }), /RECOVERY_REQUIRED/);
+  manager.files.inject = () => {};
+  const request = await serve(t, root, manager), before = diskSnapshot(root);
+  const status = await (await request('/status')).json();
+  assert.ok(status.diagnostics.some(d => d.code === 'RECOVERY_REQUIRED'));
+  // API2 allows read-only inspection/preview while WAL exists, but saving is blocked.
+  const inspection = await (await request('/preview', { revision: status.revision, operations: [op('test/next')] })).json();
+  assert.ok(inspection.previewId);
+  assert.equal((await request('/config', { previewId: inspection.previewId }, { method: 'PATCH' })).status, 409);
+  assert.deepEqual(diskSnapshot(root), before);
   assert.equal((await request('/recover', {})).status, 409);
-  assert.deepEqual(diskSnapshot(), before);
-  // A managed edit after the interrupted operation must block recovery too.
-  const configPath = path.join(root, 'oh-my-opencode-slim.jsonc');
-  const original = fs.readFileSync(configPath, 'utf8');
-  fs.writeFileSync(configPath, original.replace('"model":"test/writer"', '"model":"test/writer","description":"manual"'));
-  const drifted = diskSnapshot();
-  assert.equal((await request('/recover', confirmed)).status, 409);
-  assert.deepEqual(diskSnapshot(), drifted);
-  fs.writeFileSync(configPath, original);
-  const recovered = await request('/recover', confirmed);
+  assert.deepEqual(diskSnapshot(root), before);
+  const original = fs.readFileSync(file, 'utf8');
+  fs.writeFileSync(file, original.replace('test/new', 'test/manual'));
+  const drifted = diskSnapshot(root);
+  assert.equal((await request('/recover', { confirm: true })).status, 409);
+  assert.deepEqual(diskSnapshot(root), drifted);
+  fs.writeFileSync(file, original);
+  const recovered = await request('/recover', { confirm: true });
   assert.equal(recovered.status, 200);
-  assert.deepEqual(await recovered.json(), { ok: true, state: 'not-applied', runtimeVerified: false });
-  assert.ok(!fs.existsSync(path.join(root, '.omo-coworkers/journal.json')));
+  assert.equal((await recovered.json()).runtimeVerified, false);
+  assert.match(fs.readFileSync(file, 'utf8'), /test\/old/);
+  assert.ok(!fs.existsSync(path.join(root, '.omo-coworkers/manager-journal.json')));
   const lock = path.join(root, '.omo-coworkers/lock');
   const child = spawnSync(process.execPath, ['-e', 'console.log(process.pid)'], { encoding: 'utf8' });
   assert.equal(child.status, 0);
   fs.writeFileSync(lock, JSON.stringify({ pid: Number(child.stdout.trim()) }), { mode: 0o600 });
-  const locked = diskSnapshot();
-  const deadStatus = await (await request('/status')).json();
-  assert.equal(deadStatus.state, 'recovery-required');
-  assert.equal((await request('/preview', confirmed)).status, 409);
-  assert.deepEqual(diskSnapshot(), locked);
+  const locked = diskSnapshot(root);
+  assert.ok((await (await request('/status')).json()).diagnostics.some(d => d.code === 'RECOVERY_REQUIRED'));
+  assert.deepEqual(diskSnapshot(root), locked);
   assert.equal((await request('/recover', {})).status, 409);
-  assert.equal((await request('/recover', confirmed)).status, 200);
+  assert.equal((await request('/recover', { confirm: true })).status, 200);
   assert.equal(fs.existsSync(lock), false);
   for (const owner of [{ pid: process.pid }, { pid: -1 }, { unexpected: true }]) {
     fs.writeFileSync(lock, JSON.stringify(owner), { mode: 0o600 });
-    const unchanged = diskSnapshot();
-    assert.equal((await request('/recover', confirmed)).status, 409);
-    assert.deepEqual(diskSnapshot(), unchanged);
+    const unchanged = diskSnapshot(root);
+    assert.equal((await request('/recover', { confirm: true })).status, 409);
+    assert.deepEqual(diskSnapshot(root), unchanged);
     fs.unlinkSync(lock);
   }
 });
