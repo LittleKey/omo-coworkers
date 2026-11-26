@@ -1,30 +1,30 @@
-# Install (`omo-coworkers` 4.0.0 — OpenChamber 2.7.2+ Git URL Extension)
+# Install (`omo-coworkers` 5.0.0 — OpenChamber 2.7.2+ Git URL Extension)
 
-Starting in `4.0.0`, `omo-coworkers` is a root-level OpenChamber 2.7.2+ extension (`panel.id: "omo-coworkers"`). It contributes the three portable coworker skills (`skills/`), ships the four frozen upstream `document-writer` expression and routing payloads (`openchamber/plugin/roles/`), and provides an OpenCode V2 plugin entry (`openchamber/plugin/index.mjs`) whose two runtime hooks are **both disabled by default** and independently gated by exact operator environment variables (`OMO_COWORKERS_ENABLE_CLAUDE_GUARD=1` and the retained legacy opt-in `OMO_COWORKERS_ENABLE_WRITER_ROLE=1`).
+Starting in `4.0.0` and continuing in `5.0.0`, `omo-coworkers` is a root-level OpenChamber 2.7.2+ extension (`panel.id: "omo-coworkers"`). It contributes the three portable coworker skills (`skills/`), ships the four frozen upstream `document-writer` expression and routing payloads (`openchamber/plugin/roles/`), and provides an OpenCode V2 plugin entry (`openchamber/plugin/index.mjs`) whose two runtime hooks are **both disabled by default** and independently gated by exact operator environment variables (`OMO_COWORKERS_ENABLE_CLAUDE_GUARD=1` and the retained legacy opt-in `OMO_COWORKERS_ENABLE_WRITER_ROLE=1`).
 
-> **Breaking change from `3.x` (`coworkers-install` / `dw-install` removed; static role delivery owned by local dotfiles)**:
-> - The `bin/coworkers-install.mjs` CLI (`coworkers-install` / `dw-install`), `installer/`, `prompts/document-writer.md`, `prompts/lark-operator.md`, and root `oh-my-opencode-slim.json` overlay have been removed in `4.0.0` and are not restored.
+> **Breaking changes in `5.0.0` (`supervisor` removed) and from `3.x` (`coworkers-install` / `dw-install` removed; static role delivery owned by local dotfiles)**:
+> - **`5.0.0` removes `supervisor` plugin, CLI, and design docs**: `plugins/supervisor/`, `bin/supervisor-memory.mjs` (the `supervisor-memory` npm `bin` entry), and `docs/supervisor-*` (including `docs/archive/supervisor-memory-design-v*.md`) have been removed from this repository. Any external user memory data on disk (such as `~/.local/share/opencode-supervisor/memory/`) is left untouched.
+> - **Retired `3.x` installer remains absent (`4.0.0`+)**: `bin/coworkers-install.mjs` (`coworkers-install` / `dw-install`), `installer/`, `prompts/document-writer.md`, `prompts/lark-operator.md`, and the root `oh-my-opencode-slim.json` overlay were removed in `4.0.0` and are not restored.
 > - **Upstream semantic payloads vs. static dotfiles ownership**: `openchamber/plugin/roles/{document-writer.md,routing.json,audience.md,oracle-line.txt}` is the upstream semantic source for `document-writer` expression and targeted `orchestrator`/`oracle` routing. Personal OpenCode dotfiles (such as [dotfiles/opencode](https://github.com/LittleKey/dotfiles/tree/master/opencode)) owns the complete static OMO files (`oh-my-opencode-slim/document-writer.md`, `oh-my-opencode-slim.json` `agents["document-writer"].description` and `.orchestratorPrompt`, `oh-my-opencode-slim/orchestrator_append.md` `# Audience and dispatch`, and `oh-my-opencode-slim/oracle_append.md`), personal `model`/`skills`/`permissions`, `lark-operator`, and explicit offline snapshot updates (`update-writer-role.mjs`) plus `oprofile` staging/installation.
 > - **Do not enable `OMO_COWORKERS_ENABLE_WRITER_ROLE=1` alongside static dotfiles delivery**: the plugin's runtime `ctx.agent.transform` writer hook is off by default and retained only as an explicit legacy opt-in.
 > - Existing files previously installed on any machine or project by `3.x` remain untouched on disk; nothing is automatically deleted or migrated.
-> - The `plugins/supervisor/` plugin and `bin/supervisor-memory.mjs` CLI remain in this repository as a separate tool surface and are **not** registered by the OpenChamber extension.
 
 ---
 
 ## 1. Prerequisites & Installing the Extension via GitHub URL
 
-The repository root (`package.json` version `4.0.0`) is a self-contained, prebuilt OpenChamber extension (`engines.openchamber: ">=2.7.2"`, `apiVersion: 1`) with zero external runtime dependencies and no `install` or `build` hooks.
+The repository root (`package.json` version `5.0.0`) is a self-contained, prebuilt OpenChamber extension (`engines.openchamber: ">=2.7.2"`, `apiVersion: 1`) with zero external runtime dependencies and no `install` or `build` hooks.
 
 1. **Distinct delivery stages**:
-   Source checkout edits, local Git commits, offline `dotfiles/opencode` snapshot updates (`update-writer-role.mjs`), `oprofile` staging/activation, remote published GitHub commits, and OpenChamber extension updates are separate actions. Committing to `omo-coworkers` or `dotfiles` never automatically installs files into `~/.config/opencode` or reloads a running host. Because `package.json` remains `4.0.0` until a separately authorized release bump, local checkout changes are not active at the remote GitHub URL until pushed, and an already-installed `4.0.0` extension will not auto-detect same-version commits via OpenChamber's semver update check (see §4).
+   Source checkout edits, local Git commits, offline `dotfiles/opencode` snapshot updates (`update-writer-role.mjs`), `oprofile` staging/activation, remote published GitHub commits, and OpenChamber extension updates are separate actions. Committing to `omo-coworkers` or `dotfiles` never automatically installs files into `~/.config/opencode` or reloads a running host. Local checkout changes are not active at the remote GitHub URL until committed and pushed, and OpenChamber's semver update check detects a new release only when the remote root `package.json` `version` is higher than the currently installed version (see §4).
 2. **GitHub URL format (root only, optional branch/tag `#ref`)**:
    In OpenChamber (`>=2.7.2`), install from the repository root URL:
    ```text
    https://github.com/LittleKey/omo-coworkers.git
    ```
-   Or pin a branch or tag ref:
+   Or pin a branch or release tag ref (for example, `#v5.0.0`):
    ```text
-   https://github.com/LittleKey/omo-coworkers.git#<branch-or-tag>
+   https://github.com/LittleKey/omo-coworkers.git#v5.0.0
    ```
    *Note*: OpenChamber Git URL sources do **not** support subdirectory syntax; always point to the repository root.
 3. **What the extension registers**:
@@ -118,7 +118,7 @@ OPENCHAMBER_WEB_ROOT=/path/to/installed/@openchamber/web node --test test/writer
 
 - `test/openchamber-package.test.mjs` copies the published `package.json` + `files` allowlist into an isolated disk-backed temp directory without `node_modules` and runs from a different working directory, confirms the retired `3.x` paths (`installer`, `prompts`, `oh-my-opencode-slim.json`, `bin/coworkers-install.mjs`) are absent, runs `inspectGuestPackage` and `resolveOpenCodePluginFolder` when `OPENCHAMBER_WEB_ROOT` is set, verifies the 20-combination `(OMO_COWORKERS_ENABLE_WRITER_ROLE × OMO_COWORKERS_ENABLE_CLAUDE_GUARD)` cold-load gating matrix (confirming both features default off and ignore `ctx.options`), and verifies damaged-payload diagnosis (`ROLE_PAYLOAD_INVALID`) without blocking an opted-in Claude guard when both env vars are `"1"`.
 - `test/writer-role.test.mjs` directly exercises `setupWriterRole(ctx)` and the opted-in legacy `ctx.agent.transform` path (frozen payload SHA-256 hashes, field preservation, byte-identical `system` strings across replay and fresh setups, legacy-to-current migration, conflict refusal, inert fenced examples, non-disclosing warnings, and Claude guard independence).
-- The broader repository script `npm test` (`node --test test/*.test.mjs plugins/claude-advisor/guard.test.mjs`) remains unchanged, and separate supervisor tests remain under `plugins/supervisor/test/` (see [`plugins/supervisor/README.md`](plugins/supervisor/README.md)).
+- The full repository test suite runs via `npm test` (`node --test test/*.test.mjs plugins/claude-advisor/guard.test.mjs`).
 
 ### Runtime boundaries not proven by repository tests
 
@@ -131,7 +131,7 @@ Repository tests prove deterministic offline assembly and env-gate isolation; th
 
 ## 7. Historical Archive: Retiring or Cleaning Up `3.x` / `2.x` Installations
 
-> **Archived historical reference only — do not run `coworkers-install` or `dw-install` from a `4.0.0` checkout** (those commands no longer exist in `4.0.0`).
+> **Archived historical reference only — do not run `coworkers-install` or `dw-install` from a `4.0.0`+ / `5.0.0` checkout** (those commands no longer exist since `4.0.0`).
 
 If a target machine or project still has files installed by `omo-coworkers` `3.x` (or `2.x`) and the owner explicitly decides to remove or migrate them:
 
@@ -139,5 +139,5 @@ If a target machine or project still has files installed by `omo-coworkers` `3.x
   - Project installs recorded `.opencode/omo-coworkers-install.json` (or `.opencode/document-writer-install.json` on `≤2.x`) and optional backups under `.opencode/omo-coworkers-backup/<stamp>/`.
   - Global installs (`3.3.0`) recorded `<configDir>/omo-coworkers-install.json` and backups under `<configDir>/omo-coworkers-backup/<stamp>/`, alongside `oh-my-opencode-slim/<role>.md`, `skills/{maintaining-product-engineering-docs,domain-modeling,humanizer}/`, and additive entries in `oh-my-opencode-slim.json`.
 - **How to reverse an older install if desired**:
-  - Inspect the recorded manifest (`omo-coworkers-install.json`) and remove or hand over only the paths whose hashes and ownership you have verified (or run the historical uninstaller from a pinned `v3.3.0` git checkout/tag before migrating ownership to dotfiles or the `4.0.0` extension).
+  - Inspect the recorded manifest (`omo-coworkers-install.json`) and remove or hand over only the paths whose hashes and ownership you have verified (or run the historical uninstaller from a pinned `v3.3.0` git checkout/tag before migrating ownership to dotfiles or the `5.0.0` extension).
   - Never delete modified or personal configuration files blindly; on machines managed by personal dotfiles, coordinate ownership through the dotfiles runtime inventory rather than ad-hoc deletion.

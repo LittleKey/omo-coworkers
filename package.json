@@ -1,6 +1,6 @@
 {
   "name": "omo-coworkers",
-  "version": "4.0.0",
+  "version": "5.0.0",
   "type": "module",
   "description": "OpenChamber extension with coworker skills, frozen document-writer role payloads (with legacy opt-in native transform), and an operator-opt-in Claude dispatch guard; static role and OMO delivery are managed in local dotfiles.",
   "license": "MIT",
@@ -18,11 +18,7 @@
   },
   "homepage": "https://github.com/LittleKey/omo-coworkers#readme",
   "bugs": "https://github.com/LittleKey/omo-coworkers/issues",
-  "bin": {
-    "supervisor-memory": "./bin/supervisor-memory.mjs"
-  },
   "files": [
-    "bin",
     "openchamber",
     "skills",
     "plugins",

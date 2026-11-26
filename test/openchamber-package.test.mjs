@@ -23,7 +23,7 @@ test("root extension cold-loads offline without node_modules; optional installed
       for (const retired of ["installer", "prompts", "oh-my-opencode-slim.json", "bin/coworkers-install.mjs"]) {
         await assert.rejects(fs.stat(join(target, retired)), { code: "ENOENT" })
       }
-      assert.deepEqual(Object.keys(pkg.bin), ["supervisor-memory"])
+      assert.equal(Object.hasOwn(pkg, "bin"), false)
       const folder = join(target, pkg.openchamber.contributes.opencodePlugin)
       await t.test("installed host parses the extension", { skip: !host && "OPENCHAMBER_WEB_ROOT not set" }, async () => {
         const server = await fs.stat(join(host, "build/server")).then(() => join(host, "build/server"), () => join(host, "server"))
