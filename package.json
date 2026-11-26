@@ -2,7 +2,7 @@
   "name": "omo-coworkers",
   "version": "4.0.0",
   "type": "module",
-  "description": "OpenChamber extension with coworker skills and an operator-opt-in Claude dispatch guard; role configuration is managed separately.",
+  "description": "OpenChamber extension with coworker skills, frozen document-writer role payloads (with legacy opt-in native transform), and an operator-opt-in Claude dispatch guard; static role and OMO delivery are managed in local dotfiles.",
   "license": "MIT",
   "keywords": [
     "opencode",
