@@ -1,4 +1,4 @@
-export const VERSION = "6.1.0"
+export const VERSION = "6.1.1"
 export function assertDraftCompatible(method, path, dirty) {
   if (!dirty || method === "GET" || (method === "POST" && ["/preview", "/reveal"].includes(path)) || (method === "PATCH" && path === "/config")) return
   const error = new Error("请先保存或明确放弃普通配置草稿，再执行其他修改。")

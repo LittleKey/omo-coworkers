@@ -1,6 +1,6 @@
 {
   "name": "omo-coworkers-openchamber-plugin",
-  "version": "6.1.0",
+  "version": "6.1.1",
   "private": true,
   "type": "module",
   "exports": "./index.mjs"

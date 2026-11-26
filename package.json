@@ -1,6 +1,6 @@
 {
   "name": "omo-coworkers",
-  "version": "6.1.0",
+  "version": "6.1.1",
   "type": "module",
   "description": "OpenChamber extension with coworker skills, explicit preview/apply/rollback for native OMO configuration, and default-off legacy writer and Claude guard hooks.",
   "license": "MIT",
@@ -34,7 +34,7 @@
     "apiVersion": 1,
     "engines": { "openchamber": ">=2.8.0" },
     "contributes": {
-      "panel": { "id": "omo-coworkers", "name": "OMO Coworkers", "icon": "ri-team-line", "entry": "openchamber/panel/index.html" },
+      "panel": { "id": "omo-coworkers", "name": "OMO Coworkers", "icon": "ri-team-line", "entry": "openchamber/panel/index.html", "mobile": true },
       "service": { "entry": "openchamber/service/main.mjs", "runtime": "host" },
       "skills": "skills",
       "opencodePlugin": "openchamber/plugin"
