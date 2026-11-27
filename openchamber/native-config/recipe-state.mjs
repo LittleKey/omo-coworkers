@@ -27,6 +27,7 @@ export const recipeState = {
     for (const m of d.mutations) {
       if (!keys(m, ['target', 'before', 'after']) || !cell(m.before) || !cell(m.after)) fail('RECOVERY_REQUIRED');
       checkTarget(m.target);
+      if (m.target.category === 'acp-entry' && m.before.exists === m.after.exists) fail('RECOVERY_REQUIRED');
       const key = JSON.stringify(m.target);
       if (seen.has(key) || same(m.before, m.after)) fail('RECOVERY_REQUIRED');
       if (targets.some(t => t.kind !== 'user-template' && m.target.kind !== 'user-template' && t.relative === m.target.relative &&
@@ -110,6 +111,7 @@ export const recipeState = {
     // Capacity is checked before lock/state directory creation and again in lock.
     const admission = old => {
       this.checkGuards(delta, old);
+      this.validateAcpEntries(delta);
       const pending = bounded(JSON.stringify({ ...old, pending: delta }));
       const final = bounded(JSON.stringify(this.finalState(old, delta)));
       const writes = this.prepare(this.nativeEntries(delta), 'after');
@@ -221,8 +223,19 @@ export const recipeState = {
       resourceId: m.target.resourceId ?? 'user-templates', field: m.target.field ?? [m.target.templateId],
       action: m.after.exists ? 'set' : 'delete',
       beforeExists: m.before.exists, afterExists: m.after.exists,
-      ...(['ordinary', 'membership'].includes(m.target.category) ? { before: m.before.value, after: m.after.value } : { beforeHash: m.before.exists ? hash(JSON.stringify(m.before.value)) : null, afterHash: m.after.exists ? hash(JSON.stringify(m.after.value)) : null }),
-      risk: !m.after.exists ? 'delete' : m.target.field?.some(k => ['permission', 'permissions', 'permissionMode', 'command', 'args', 'cwd'].includes(k)) ? 'permission-or-execution' : null,
+      ...(m.target.category === 'acp-entry' ? { entrySummary: this.publicEntrySummary(m) } : {}),
+      ...(['ordinary', 'membership', 'behavior-env'].includes(m.target.category) ? { before: m.before.value, after: m.after.value } : { beforeHash: m.before.exists ? hash(JSON.stringify(m.before.value)) : null, afterHash: m.after.exists ? hash(JSON.stringify(m.after.value)) : null }),
+      risk: m.target.category === 'behavior-env' ? 'behavior-change' : m.target.category === 'acp-entry' ? 'execution-and-content' : !m.after.exists ? 'delete' : m.target.field?.some(k => ['permission', 'permissions', 'permissionMode', 'command', 'args', 'cwd'].includes(k)) ? 'permission-or-execution' : null,
     }));
+  },
+  publicEntrySummary(m) {
+    if (m.before.exists === m.after.exists) fail('RECOVERY_REQUIRED');
+    const value = m.after.exists ? m.after.value : m.before.value;
+    this.checkNativeValue(m.target, value);
+    const runtime = {};
+    for (const key of ['command', 'args', 'cwd', 'wrapperModel', 'timeoutMs', 'permissionMode']) {
+      if (Object.hasOwn(value, key)) runtime[key] = value[key];
+    }
+    return { action: m.after.exists ? 'create' : 'delete', agentId: m.target.field[1], runtime };
   },
 };

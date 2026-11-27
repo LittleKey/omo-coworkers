@@ -1,7 +1,9 @@
 import { execFile } from 'node:child_process';
 
 const TTL = 60_000;
-const TIMEOUT = 5_000;
+// Both fixed read commands run concurrently within one budget, below the
+// host SDK's 20s request deadline (not two serial 18s windows).
+const TIMEOUT = 18_000;
 const MAX_BYTES = 1024 * 1024;
 const failure = (code) => Object.assign(new Error(code), { catalogCode: code });
 
@@ -51,8 +53,13 @@ export function createModelCatalog({ runCli = runDefault, now = Date.now, contex
     const diagnostics = [];
     let catalog = [];
     const variants = Object.create(null);
+    const [modelsResult, variantsResult] = await Promise.allSettled([
+      command(['models'], key),
+      command(['api', 'GET', '/api/model'], key),
+    ]);
     try {
-      const output = await command(['models'], key);
+      if (modelsResult.status === 'rejected') throw modelsResult.reason;
+      const output = modelsResult.value;
       catalog = [...new Set(output.split(/\r?\n/u).map((s) => s.trim())
         .filter((s) => !s.startsWith('#') && modelId(s)))];
       if (!catalog.length) throw failure('malformed-output');
@@ -62,7 +69,10 @@ export function createModelCatalog({ runCli = runDefault, now = Date.now, contex
     if (catalog.length) {
       try {
         let parsed;
-        try { parsed = JSON.parse(await command(['api', 'GET', '/api/model'], key)); }
+        try {
+          if (variantsResult.status === 'rejected') throw variantsResult.reason;
+          parsed = JSON.parse(variantsResult.value);
+        }
         catch (error) {
           if (error instanceof SyntaxError) throw failure('malformed-output');
           throw error;

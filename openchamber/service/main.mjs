@@ -56,7 +56,7 @@ export function createService({ token, root, manager = new ConfigManager(root), 
       send(res, 200, result);
     } catch (err) {
       const known = new Set(['MIGRATION_REQUIRED', 'LEGACY_RECOVERY_REQUIRED', 'INVALID_REQUEST', 'TOO_LARGE', 'CONFIRMATION_REQUIRED', 'PROTECTED_FIELD', 'INVALID_VALUE', 'REVEAL_REQUIRED', 'INVALID_RESOURCE', 'STALE_REVISION', 'STALE_PREVIEW', 'CONFLICT', 'CAPACITY', 'LOCKED', 'BUSY', 'UNSAFE_PATH', 'RECOVERY_REQUIRED', 'NO_CHANGES', 'INVALID_JSONC', 'AMBIGUOUS_KEYS', 'UNKNOWN_TEMPLATE', 'INVALID_CONFIG', 'INVALID_PARAMETERS', 'PAYLOAD_CHANGED']);
-      for (const code of ['READ_ONLY', 'INLINE_CONFIRMATION_REQUIRED']) known.add(code);
+      for (const code of ['READ_ONLY', 'INLINE_CONFIRMATION_REQUIRED', 'MISSING_TRANSPORT']) known.add(code);
       const code = known.has(err.code) ? err.code : 'IO_FAILURE';
       const diagnostic = manager.diagnostic(code, err.resource ?? null);
       send(res, code === 'INVALID_REQUEST' ? 400 : code === 'TOO_LARGE' ? 413 : code === 'IO_FAILURE' ? 500 : 409, {

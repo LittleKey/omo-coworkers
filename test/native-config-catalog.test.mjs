@@ -12,7 +12,7 @@ test('exact CLI vectors, real variants only, safe projection and cloned cache', 
   const calls = [];
   const adapter = createModelCatalog({ runCli: (args, options) => {
     calls.push(args);
-    assert.equal(options.timeoutMs, 5000);
+    assert.equal(options.timeoutMs, 18000);
     assert.equal(options.maxBytes, 1048576);
     return mock(args);
   }, context: { secret: 'do-not-project' } });
@@ -65,7 +65,7 @@ test('malformed API and models are finite diagnostics, no fallback, recovery', a
     return mock(args);
   } });
   assert.deepEqual((await adapter.get()).diagnostics, ['models:malformed-output']);
-  assert.equal(calls.length, 1);
+  assert.equal(calls.length, 2);
   mode = 'bad-api';
   assert.deepEqual((await adapter.get()).diagnostics, ['variants:malformed-output']);
   mode = 'bad-shape';
@@ -89,13 +89,50 @@ test('byte bound, nontext output and no guessed variants', async () => {
   assert.deepEqual((await adapter.get()).variants, {});
 });
 
-test('bounded timeout clears inflight and permits recovery', async () => {
+test('one concurrent deadline clears inflight and permits recovery', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
   let stuck = true;
-  const adapter = createModelCatalog({ runCli: (args) => stuck
-    ? new Promise(() => {}) : mock(args) });
-  const [a, b] = await Promise.all([adapter.get(), adapter.get({ refresh: true })]);
+  const calls = [];
+  const adapter = createModelCatalog({ runCli: (args) => {
+    calls.push(args);
+    return stuck ? new Promise(() => {}) : mock(args);
+  } });
+  const pending = Promise.all([adapter.get(), adapter.get({ refresh: true })]);
+  await new Promise(setImmediate);
+  assert.equal(calls.length, 2);
+  t.mock.timers.tick(18000);
+  const [a, b] = await pending;
   assert.deepEqual(a.diagnostics, ['models:timeout']);
   assert.deepEqual(b.diagnostics, ['models:timeout']);
   stuck = false;
   assert.deepEqual((await adapter.get()).diagnostics, []);
+});
+
+test('models slower than old 5s deadline succeed and empty variants cache normally', async () => {
+  let calls = 0;
+  const adapter = createModelCatalog({ runCli: async (args) => {
+    calls++;
+    if (args[0] === 'api') return '{"data":[]}';
+    await new Promise((resolve) => setTimeout(resolve, 5100));
+    return 'p/m\np/other\n';
+  } });
+  const result = await adapter.get();
+  assert.deepEqual(result.catalog, ['p/m', 'p/other']);
+  assert.deepEqual(result.diagnostics, []);
+  assert.deepEqual(result.variants, {});
+  assert.equal((await adapter.get()).cache.hit, true);
+  assert.equal(calls, 2);
+});
+
+test('variant timeout preserves models within the same deadline', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const adapter = createModelCatalog({ runCli: (args) => args[0] === 'models'
+    ? 'p/m' : new Promise(() => {}) });
+  const pending = adapter.get();
+  await new Promise(setImmediate);
+  t.mock.timers.tick(18000);
+  const result = await pending;
+  assert.deepEqual(result.catalog, ['p/m']);
+  assert.deepEqual(result.diagnostics, ['variants:timeout']);
+  assert.equal(result.provenance, 'unverified');
 });

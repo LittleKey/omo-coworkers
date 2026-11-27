@@ -21,6 +21,21 @@ test("server expiry required",()=>{
   assert.equal(usablePreview({previewId:"p"}),false)
   assert.equal(usablePreview({previewId:"p",expiresAt:new Date(Date.now()+60000).toISOString()}),true)
 })
+test("role baseline intent merges unrelated changes and rejects dependent conflicts",()=>{
+  const draft={enabled:true,model:"p/new",variant:null,variantChosen:true}
+  const disabled=structuredClone(role);disabled.settings.enabled=false
+  assert.equal(Object.hasOwn(roleIntent(role,draft,disabled),"enabled"),false)
+  const changed=structuredClone(role);changed.settings.model.value="p/external"
+  assert.deepEqual(roleIntent(role,{enabled:false,model:"p/old",variantChosen:false},changed),{kind:"role-settings",capabilityId:"document-role",enabled:false})
+  assert.throws(()=>roleIntent(role,draft,changed),/外部已修改/)
+  assert.throws(()=>roleIntent(role,{enabled:true,model:"p/old",variant:"high",variantChosen:true},changed),/外部已修改/)
+})
+test("ACP entry preview uses only finite public runtime summary",()=>{
+  const text=changeSummary({entrySummary:{action:"delete",agentId:"claude",runtime:{command:"claude-agent-acp",args:[],timeoutMs:0,permissionMode:"ask",env:"SECRET"}}})
+  assert.match(text,/删除 ACP 代理 claude/)
+  assert.match(text,/可执行程序/)
+  assert.doesNotMatch(text,/SECRET/)
+})
 test("dirty draft comparison survives unavailable snapshot through valid baseline",async()=>{
   const baseline=structuredClone(role),draft={enabled:false,model:"p/old",variant:"unknown-current",variantChosen:false}
   assert.equal(hasChanges(baseline,draft),true)
@@ -28,9 +43,23 @@ test("dirty draft comparison survives unavailable snapshot through valid baselin
   assert.equal(unavailable.settings,undefined)
   assert.equal(hasChanges(baseline,draft),true)
   const app=await readFile(new URL("../openchamber/panel/app.js",import.meta.url),"utf8")
-  assert.match(app,/const dirty=\(\)=>hasChanges\(draftBaseline,draft\)/)
+  assert.match(app,/hasChanges\(draftBaseline,draft\)/)
   assert.match(app,/renderOpen\(selected,preserve&&wasDirty\)/)
   assert.match(app,/if\(!preserveDraft\)/)
+})
+test("official SDK theme and searchable picker use narrow ACP fields",async()=>{
+  const app=await readFile(new URL("../openchamber/panel/app.js",import.meta.url),"utf8")
+  const theme=await readFile(new URL("../openchamber/panel/vendor/theme.js",import.meta.url),"utf8")
+  assert.match(app,/onReady\?\.\(context=>applyHostReady/)
+  assert.match(theme,/\['--oc-bg', 'background'\]/)
+  assert.match(app,/role","combobox"/)
+  assert.match(app,/kind:"acp-settings"/)
+  assert.match(app,/kind:"acp-create"/)
+  assert.doesNotMatch(app,/env:\s*draft|shell:\s*true/)
+  assert.match(app,/behaviorEnv/)
+  for(const key of ["CLAUDE_CODE_DISABLE_CLAUDE_MDS","CLAUDE_CODE_DISABLE_BUNDLED_SKILLS","CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"])assert.match(app,new RegExp(key))
+  assert.match(app,/select.value==="inherit"\?null:select.value/)
+  assert.match(app,/risk==="behavior-change"/)
 })
 test("readonly model also blocks variant; membership wording follows disabled membership",()=>{
   assert.throws(()=>roleIntent({...role,settings:{...role.settings,model:{...role.settings.model,editable:false}}},{enabled:true,model:"p/old",variant:null,variantChosen:true}),/不支持/)

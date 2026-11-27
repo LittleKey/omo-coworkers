@@ -26,7 +26,7 @@ test('projection, JSONC preservation, private ancestor modes and unrelated rebas
 });
 test('known-looking fields below unknown ancestors protected; native ACP enum', t => {
   const { m, file } = fixture(t);
-  fs.writeFileSync(file, '{"unknown":{"model":"NESTEDSECRET"},"acpAgents":{"claude":{}}}');
+  fs.writeFileSync(file, '{"unknown":{"model":"NESTEDSECRET"},"acpAgents":{"claude":{"command":"claude-agent-acp"}}}');
   const snap = m.snapshot();
   assert.ok(!JSON.stringify(snap).includes('NESTEDSECRET'));
   assert.throws(() => m.preview({ revision: snap.revision, operations: [{ resourceId: 'config', field: ['unknown', 'model'], action: 'set', value: 'new' }] }), { code: 'PROTECTED_FIELD' });

@@ -7,6 +7,7 @@ import { listTemplates, composeTemplate } from './templates.mjs';
 import { recipeState } from './recipe-state.mjs';
 import { recipeIntents } from './recipe-intents.mjs';
 import { capabilities } from './capabilities.mjs';
+import { acpSettings, behaviorEnvKeys } from './acp-settings.mjs';
 
 const id = () => crypto.randomBytes(16).toString('hex');
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
@@ -118,6 +119,7 @@ export class ConfigManager {
       LOCKED: ['Another writer or unrecognized lock owner holds the lock.', 'Wait for that writer; only confirmed dead owners can be recovered.'],
       MIGRATION_REQUIRED: ['Legacy metadata requires an explicit one-time migration.', 'Preview migration after stopping the old writer; confirm receipt capability discard separately.'],
       LEGACY_RECOVERY_REQUIRED: ['An unresolved legacy journal blocks format3 migration and saving.', 'Use the legacy recovery procedure locally before migration; this service does not silently reinterpret it.'],
+      MISSING_TRANSPORT: ['ACP guidance requires an existing valid command.', 'Explicitly create or complete the ACP connection settings, then preview guidance again.'],
     };
     const [reason, nextAction] = messages[code] ?? ['The resource cannot be read safely.', 'Inspect the file locally, fix syntax or access, then refresh.'];
     return { code, resource, reason, nextAction };
@@ -314,7 +316,7 @@ export class ConfigManager {
   }
   checkNativeTarget(t, live = false) {
     if (!exactKeys(t, ['resourceId', 'logical', 'relative', 'links', 'kind', 'field', 'category']) ||
-        !['config', 'prompt'].includes(t.kind) || !validPath(t.field) || !['ordinary', 'prompt', 'membership', 'presence'].includes(t.category) ||
+        !['config', 'prompt'].includes(t.kind) || !validPath(t.field) || !['ordinary', 'prompt', 'membership', 'presence', 'shape', 'acp-entry', 'behavior-env'].includes(t.category) ||
         t.kind === 'config' && (!['oh-my-opencode-slim.json', 'oh-my-opencode-slim.jsonc'].includes(t.logical) || !t.field.length) ||
         t.kind === 'prompt' && (!/^oh-my-opencode-slim\/(?:[a-zA-Z0-9_-]+\/)?[a-zA-Z0-9_-]+\.md$/.test(t.logical) || t.field.length)) fail('RECOVERY_REQUIRED');
     if (typeof t.relative !== 'string' || path.isAbsolute(t.relative) || t.relative.split('/').some(k => !k || k === '.' || k === '..') || !Array.isArray(t.links)) fail('RECOVERY_REQUIRED');
@@ -327,8 +329,16 @@ export class ConfigManager {
     }
   }
   checkNativeValue(t, value) {
+    if (t.category === 'behavior-env') {
+      if (t.kind !== 'config' || t.field.length !== 4 || t.field[0] !== 'acpAgents' || t.field[1] !== 'claude' || t.field[2] !== 'env' || !behaviorEnvKeys.includes(t.field[3]) || !['1', '0'].includes(value)) fail('PROTECTED_FIELD');
+      return;
+    }
+    if (t.category === 'acp-entry') {
+      if (t.kind !== 'config' || t.field.length !== 2 || t.field[0] !== 'acpAgents' || !['claude', 'antigravity'].includes(t.field[1]) || containsSensitive(value) || !schemaAccepts(schemaAt(t.field), value)) fail('INVALID_CONFIG');
+      return;
+    }
     if (t.category === 'membership') {
-      if (t.kind !== 'config' || t.field.length !== 2 || t.field[0] !== 'disabled_agents' || !['document-writer', 'lark-operator'].includes(t.field[1]) || typeof value !== 'boolean') fail('INVALID_VALUE');
+      if (t.kind !== 'config' || t.field.length !== 2 || t.field[0] !== 'disabled_agents' || !['document-writer', 'lark-operator', 'claude', 'antigravity'].includes(t.field[1]) || typeof value !== 'boolean') fail('INVALID_VALUE');
       return;
     }
     if (t.category === 'prompt' && ['prompt', 'appendPrompt'].includes(t.field.at(-1)) && contextKnown(t.field) && typeof value === 'string') {
@@ -339,12 +349,18 @@ export class ConfigManager {
   }
   nativeCell(t) {
     const data = this.readResource({ ...t, id: t.resourceId });
+    if (t.category === 'shape') {
+      if (t.kind !== 'config' || t.field[0] !== 'acpAgents' || t.field.length > 3) fail('INVALID_CONFIG');
+      const value = get(data.object, t.field);
+      const shape = value === undefined ? 'missing' : safeObject(value) ? 'object' : 'invalid';
+      return { exists: true, value: t.field.length === 2 || shape === 'invalid' ? shape : 'valid-object-or-missing' };
+    }
     if (t.category === 'presence') {
       if (t.kind !== 'config' || t.field.length !== 4 || t.field[0] !== 'presets' || t.field[2] !== 'agents' || !['document-writer', 'lark-operator'].includes(t.field[3])) fail('INVALID_VALUE');
       return { exists: true, value: own(get(data.object, t.field.slice(0, -1)) ?? {}, t.field.at(-1)) };
     }
     if (t.category === 'membership') {
-      const members = data.object.disabled_agents ?? ['observer'];
+      const members = data.object.disabled_agents === undefined ? ['observer'] : data.object.disabled_agents;
       if (!Array.isArray(members) || members.some(v => typeof v !== 'string')) fail('INVALID_VALUE');
       return { exists: true, value: members.includes(t.field[1]) };
     }
@@ -356,6 +372,24 @@ export class ConfigManager {
       ...m.target, beforeExists: m.before.exists, before: m.before.value,
       afterExists: m.after.exists, after: m.after.value,
     }));
+  }
+  validateAcpEntries(delta) {
+    const entries = this.nativeEntries(delta), targets = new Map();
+    for (const e of entries) if (e.kind === 'config' && e.field[0] === 'acpAgents' && ['claude', 'antigravity'].includes(e.field[1])) {
+      targets.set(`${e.relative}:${e.field[1]}`, e);
+    }
+    for (const e of entries) if (e.category === 'membership' && ['claude', 'antigravity'].includes(e.field[1])) {
+      targets.set(`${e.relative}:${e.field[1]}`, { ...e, field: ['acpAgents', e.field[1]] });
+    }
+    for (const e of targets.values()) {
+      const data = this.readResource({ ...e, id: e.resourceId });
+      let text = data.text;
+      for (const m of entries.filter(m => m.relative === e.relative && m.field[0] === 'acpAgents' && m.field[1] === e.field[1])) {
+        text = edit(text, m.field, m.afterExists ? m.after : undefined);
+      }
+      const value = get(parse(text), ['acpAgents', e.field[1]]);
+      if (value !== undefined && !schemaAccepts(schemaAt(['acpAgents', e.field[1]]), value)) fail('INVALID_CONFIG');
+    }
   }
   checkUserSelection(field, value) {
     if (!validPath(field) || field.some(k => ['command', 'args', 'cwd'].includes(k)) || classification(field, value) !== 'ordinary') fail('PROTECTED_FIELD');
@@ -462,3 +496,4 @@ export { exactKeys, classification };
 
 Object.assign(ConfigManager.prototype, recipeState, recipeIntents);
 Object.assign(ConfigManager.prototype, capabilities);
+Object.assign(ConfigManager.prototype, acpSettings);

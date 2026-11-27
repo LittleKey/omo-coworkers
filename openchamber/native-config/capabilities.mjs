@@ -56,7 +56,7 @@ export const capabilities = {
       }
       entries.push(entry);
     }
-    return { ok: true, revision: snap.revision, capabilities: entries, history: snap.history, diagnostics: snap.diagnostics, runtimeVerified: false };
+    return { ok: true, revision: snap.revision, capabilities: entries, acpAgents: this.acpSnapshot(snap.revision), history: snap.history, diagnostics: snap.diagnostics, runtimeVerified: false };
   },
   contentPlan(snap, capabilityId, confirmed) {
     const config = snap.raw.get('config');
@@ -114,6 +114,7 @@ export const capabilities = {
     if (!exact(body, ['revision', 'intent']) || !body.intent) fail('INVALID_REQUEST');
     const snap = this.currentSnapshot(body.revision), config = snap.raw.get('config'), intent = body.intent;
     if (!config) fail('INVALID_CONFIG');
+    if (['acp-create', 'acp-settings'].includes(intent.kind)) return this.acpIntent(body);
     if (intent.kind === 'role-settings') {
       if (!exact(intent, ['kind', 'capabilityId', 'enabled', 'model', 'variant'], ['kind', 'capabilityId']) || !own(roleNames, intent.capabilityId) || !['enabled', 'model', 'variant'].some(k => own(intent, k))) fail('INVALID_REQUEST');
       const agent = roleNames[intent.capabilityId], mutations = [], guards = [];
@@ -153,9 +154,17 @@ export const capabilities = {
     if (intent.kind === 'adopt-content') {
       if (!exact(intent, ['kind', 'capabilityId', 'confirmInlineReplacement'], ['kind', 'capabilityId']) || !listTemplates().some(t => t.id === intent.capabilityId) || own(intent, 'confirmInlineReplacement') && intent.confirmInlineReplacement !== true) fail('INVALID_REQUEST');
       const content = this.contentPlan(snap, intent.capabilityId, intent.confirmInlineReplacement === true);
+      if (intent.capabilityId.endsWith('-acp-guidance')) {
+        const id = intent.capabilityId.replace('-acp-guidance', ''), entry = config.object.acpAgents?.[id];
+        if (!entry || typeof entry.command !== 'string' || !entry.command.length) fail('MISSING_TRANSPORT');
+      }
       if (content.inline && intent.confirmInlineReplacement !== true) fail('INLINE_CONFIRMATION_REQUIRED');
       if (!content.mutations.length) fail('NO_CHANGES');
       const delta = this.delta(content.mutations, 'Adopt project content'); delta.guards.push(...content.guards);
+      if (intent.capabilityId.endsWith('-acp-guidance')) {
+        delta.guards.push(...this.acpGuards(config, intent.capabilityId.replace('-acp-guidance', '')));
+        this.validateAcpEntries(delta);
+      }
       return this.registerPreview(delta, this.safeChanges(content.mutations));
     }
     fail('INVALID_REQUEST');

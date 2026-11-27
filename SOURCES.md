@@ -1,16 +1,17 @@
 # Sources
 
-## 当前包来源（7.0.0）
+## 当前包来源（7.1.0）
 
 - `package.json` 声明 OpenChamber `>=2.8.0`、Node `>=20`，包含支持移动端的面板、宿主服务、技能和插件。安装不自动修改原生配置。
 - `openchamber/native-config/capabilities.mjs` 将 `document-role`、`lark-role` 的启用、模型和 variant，以及协作、Claude、Antigravity 指导的显式内容采用，编译为有限意图。复杂继承或模型链只读；启停只更改角色对应 `disabled_agents` 成员并保留缺省 observer 语义。个人模型、依赖和凭据不因内容采用而被替换。
 - `openchamber/native-config/manifest.json` 版本 `7.0.0` 声明能力依赖及七份提示词的源路径和 SHA-256。`document-writer` 正文的唯一冻结源为 `openchamber/plugin/roles/document-writer.md`（`36ef44de293053e5fbeb743851d63ba5c9965a85c78147e2b40dacc50f71fd9d`）；角色描述和路由以及 ACP 指导源于 `fragments/leaves.json`。清单列出的 document-writer 必需技能为 `maintaining-product-engineering-docs`，可选 `domain-modeling`、`humanizer`；Lark 外部依赖及就绪情况未知。
 - `openchamber/service/main.mjs` 提供 API v3、Bearer 鉴权和有限意图、历史撤销、迁移、恢复及独立行为设置。通用编辑、提示词揭露和用户配方 API 返回 `410 API_RETIRED`；旧 userTemplates、undo、pending 解码未删除。`recipe-state.mjs` 保留最近十次撤销、无年龄截止，受字节限制；pending 支持显式条件恢复，跨文件非原子。
-- `openchamber/service/model-catalog.mjs` 只调用固定 `opencode models` 与 `opencode api GET /api/model`，缓存 60 秒、命令超时 5 秒、输出上限 1 MiB，目录来源始终未验证，不证明实际宿主实例或可调用性。
-- `openchamber/panel/{index.html,panel.css,app.js,model.js}` 使用单一自适应界面；项目角色提供启用、模型、variant，指导提供内容采用，不提供其他 OMO 配置摘要或通用编辑。已识别的内联覆盖需要确认，未解析遮蔽阻止采用。
+- `openchamber/service/model-catalog.mjs` 并发调用固定 `opencode models` 与 `opencode api GET /api/model`，缓存 60 秒、每条命令限时 18 秒、输出上限 1 MiB；共享窗口不是硬实时保证，目录来源未验证，不证明实际宿主实例或可调用性。
+- `openchamber/native-config/acp-settings.mjs` 提供两个 ACP 代理的有限创建、补齐、六个原生字段及启用设置；指导采用另行确认，已有个人值和未知代理保留。仅 Claude 三个禁用行为标志可显式设置 `1`、`0` 或移除本地覆盖；未覆盖的进程环境未知，非规范值及动态内部模型/effort 只读，凭据和其他环境键不回显或复制。
+- `openchamber/panel/{index.html,panel.css,app.js,model.js}` 使用宿主风格自适应设置界面、SDK 主题与可搜索选择器；协作为项目任务分工规则，ACP 设置与指导分开。普通无风险角色保存可一次完成，风险变更需确认；不提供通用编辑。
 - `openchamber/service/behavior-settings.mjs` 和 `openchamber/plugin/behavior-settings.mjs` 维护独立行为设置；文件优先，缺失时才回退旧环境变量，异常失败关闭。独立 guard 副本可见性未知，不会自动清理。
 - 资产来源：`openchamber/native-config/vendor/jsonc-parser/` 包含 Microsoft jsonc-parser 3.3.1；`openchamber/native-config/schema/omo-3.0.8.json` 与 `openchamber/panel/vendor/` 分别保留 schema 与 SDK 的来源和许可文件。项目随包技能为 `maintaining-product-engineering-docs`、`domain-modeling`、`humanizer`。
-- 验证范围：作者报告 catalog 5 项、既有 backend 41 项、frontend 6 项及新增 integration 9 项，存在覆盖复用，不能相加视为独立总数。隔离浏览器使用注入配置根、目录和 SDK transport；不证明真实 Android、宿主授权、全局 CLI 或运行态。最终完整套件和独立评审仍待完成，既有安全覆盖缺口未关闭。旧 OMO 3.0.8 加载器测试只覆盖旧七提示词与十叶节点产物，不能证明全部 7.0 行为。
+- 验证范围：7.1 作者报告后端环境增量 15/15、前端环境增量 7/7，并复用先前专项及隔离浏览器证据，不能相加作为独立总数。浏览器使用注入配置根、目录和 SDK transport；不证明真实 Android、宿主授权或运行态。最终完整套件与独立评审待完成；历史安全覆盖 BLOCKED 是未完成覆盖，不代表已发现漏洞。
 - `dotfiles/opencode` 的 OMO 写入链已退役，历史文件仅供参考；不要用旧安装器覆盖现行配置。详见 [INSTALL.md](INSTALL.md)。
 
 ---

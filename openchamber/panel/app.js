@@ -1,4 +1,5 @@
 import { connectHost } from "./vendor/host.js"
+import { applyHostReady } from "./vendor/theme.js"
 import { request, roleIntent, hasChanges, usablePreview, changeSummary } from "./model.js"
 const $ = id => document.getElementById(id)
 const el = (tag,text,cls) => { const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n }
@@ -6,8 +7,14 @@ const btn = (text,fn,cls) => { const n=el("button",text,cls);n.type="button";n.o
 let host,snapshot,catalog={catalog:[],variants:{}},contributions,selected,draft,preview,writing=false,reading=false,pendingLeave
 let generation=0
 let draftBaseline=null
-const current=()=>snapshot?.capabilities.find(c=>c.id===selected)
-const dirty=()=>hasChanges(draftBaseline,draft)
+let invalidInputs={}
+const behaviorLabels={
+  CLAUDE_CODE_DISABLE_CLAUDE_MDS:["禁用 CLAUDE.md 记忆加载","包含用户、项目与自动记忆文件。"],
+  CLAUDE_CODE_DISABLE_BUNDLED_SKILLS:["禁用内置 Skills 与工作流","不影响插件及个人目录中的 Skills。"],
+  CLAUDE_CODE_DISABLE_BACKGROUND_TASKS:["禁用后台任务能力","限制后台工具运行与自动转后台；不等于关闭所有后台会话。"],
+}
+const current=()=>selected?.startsWith("acp:")?snapshot?.acpAgents?.find(c=>`acp:${c.id}`===selected):snapshot?.capabilities.find(c=>c.id===selected)
+const dirty=()=>Object.keys(invalidInputs).length>0||(selected?.startsWith("acp:")?Boolean(draftBaseline&&draft&&JSON.stringify(draft)!==JSON.stringify(draftBaseline)):hasChanges(draftBaseline,draft))
 const titleOf=c=>({"document-role":"文档协作","lark-role":"飞书操作","collaboration":"协作指导","claude-acp-guidance":"Claude 指导","antigravity-acp-guidance":"Antigravity 指导"})[c.id]||c.title
 const call=(method,path,body)=>request(host,method,path,body)
 function notice(text,error=false){$("notice").textContent=text;$("notice").dataset.error=String(error)}
@@ -40,8 +47,14 @@ function renderOpen(id,preserveDraft=false){
   invalidate();selected=id
   const c=current()
   if(!preserveDraft){
-    draftBaseline=c?.settings?structuredClone(c):null
-    draft=c?.settings?{enabled:c.settings.enabled,model:c.settings.model.value,variant:c.settings.variant.value,variantChosen:false}:null
+    invalidInputs={}
+    if(id?.startsWith("acp:")&&c){
+      draft={enabled:c.enabled,settings:Object.fromEntries(Object.entries(c.settings).map(([k,v])=>[k,v.value])),behaviorEnv:Object.fromEntries((c.env||[]).filter(v=>Object.hasOwn(behaviorLabels,v.key)).map(v=>[v.key,v.value]))}
+      draftBaseline=structuredClone(draft)
+    }else{
+      draftBaseline=c?.settings?structuredClone(c):null
+      draft=c?.settings?{enabled:c.settings.enabled,model:c.settings.model.value,variant:c.settings.variant.value,variantChosen:false}:null
+    }
   }
   $("workspace").dataset.open=String(Boolean(c));renderList();renderDetail()
   if(c)$("detail-title").focus();else document.querySelector("#list button")?.focus()
@@ -50,12 +63,16 @@ $("stay").onclick=()=>{if(writing)return;$("leave").hidden=true;$("detail-title"
 $("discard-leave").onclick=()=>{if(writing)return;$("leave").hidden=true;open(pendingLeave)}
 function renderList(){
   $("list").replaceChildren()
-  for(const kind of ["role","guidance"]){
-    $("list").append(el("p",kind==="role"?"项目角色":"项目指导","group-label"))
+  for(const kind of ["role","acp","guidance"]){
+    $("list").append(el("p",kind==="role"?"角色":kind==="acp"?"ACP 代理":"项目设置","group-label"))
+    if(kind==="acp"){
+      for(const c of snapshot.acpAgents||[]){const b=btn(c.id,()=>navigate(`acp:${c.id}`));b.dataset.id=`acp:${c.id}`;b.setAttribute("aria-current",String(selected===`acp:${c.id}`));$("list").append(b)}
+      continue
+    }
     for(const c of snapshot.capabilities.filter(c=>c.kind===kind)){
+      if(kind==="guidance"&&c.id!=="collaboration")continue
       const b=btn("",()=>navigate(c.id));b.dataset.id=c.id;b.setAttribute("aria-current",String(c.id===selected))
-      b.append(el("strong",titleOf(c)),el("span",c.kind==="role"?(c.settings?`${c.settings.enabled?"配置启用":"配置停用"} · 运行中未确认`:"配置不可用 · 请查看诊断"):"项目内容 · 不提供代理启停","badge"))
-      if(c.settings)b.append(el("span",c.settings.model.value||c.settings.model.inheritedValue||"模型来源待确认","model-full"))
+      b.append(el("span",c.id==="collaboration"?"任务分工与协作规则":titleOf(c)))
       $("list").append(b)
     }
   }
@@ -65,8 +82,10 @@ function renderDetail(){
   const box=$("detail");box.replaceChildren();const c=current()
   if(!c){box.append(el("p","选择一项能力，查看项目内容与可用设置。","empty"));return}
   const back=btn("← 返回能力",()=>navigate(null));back.id="back";box.append(back)
+  if(selected.startsWith("acp:")){renderAcp(box,c);return}
   const title=el("h2",titleOf(c));title.id="detail-title";title.tabIndex=-1;box.append(title)
   box.append(el("p",c.kind==="role"?"只调整启用、模型与支持的思考等级。项目正文与依赖不在这里编辑。":"采用项目指导，不等于启停内建代理或外部 ACP 服务。","muted"))
+  if(c.id==="collaboration")box.append(el("p","为 orchestrator、oracle、explorer、designer、fixer 提供任务分工与协作约定。不是新代理，不配置模型，也不启动后台服务。","muted"))
   if(c.kind==="role"&&!c.settings)box.append(el("p","配置暂不可用。下方环境诊断与恢复入口仍可使用；修复后刷新。","muted"))
   if(c.settings){
     const label=el("label",undefined,"check"),check=el("input");check.type="checkbox";check.id="enabled";check.checked=draft.enabled
@@ -102,6 +121,7 @@ function modelControls(box,c){
   select.value=draft.model||""
   select.onchange=()=>{draft.model=select.value;draft.variantChosen=false;draft.variant=variant.value;change();renderVariant()}
   box.append(select,el("p",model.reason||(!variant.editable?"思考等级来源只读，暂不能安全切换模型。":`来源：${model.source}`),"source"))
+  enhancePicker(select,"选择模型")
   const full=el("p",draft.model||model.inheritedValue||"未解析模型","model-full");select.addEventListener("change",()=>full.textContent=draft.model);box.append(full)
   box.append(el("p","目录来自宿主 CLI，未验证是否对应当前宿主实例；不代表模型能成功调用。","muted"))
   if(catalog.diagnostics?.length)box.append(el("p",`目录诊断：${catalog.diagnostics.join("、")}。当前未知值会保留，不猜测模型或等级。`,"muted"))
@@ -117,6 +137,7 @@ function modelControls(box,c){
     input.value=draft.variantChosen?(draft.variant===null?"default":`id:${draft.variant}`):"keep"
     input.onchange=()=>{draft.variantChosen=input.value!=="keep";draft.variant=input.value==="default"?null:input.value.startsWith("id:")?input.value.slice(3):variant.value;change()}
     region.append(input,el("p",`当前：${variant.value??"默认"}；来源：${variant.source}${variant.reason?`；${variant.reason}`:""}`,"source"))
+    enhancePicker(input,"思考等级")
     if(!model.editable)region.append(el("p",model.reason||"模型来源只读，因此思考等级也不可修改。","muted"))
     if(!(catalog.variants[draft.model]||[]).length)region.append(el("p","没有可确认的等级目录；只可保留当前值或明确选择默认，不猜测 low/high。","muted"))
   }renderVariant()
@@ -128,17 +149,103 @@ function renderSave(){
   const actions=el("div",undefined,"actions")
   const save=btn("保存设置",()=>action(async()=>{
     if(!current()?.settings)throw new Error("配置暂不可用；草稿保留，请修复配置后刷新。")
-    await previewIntent(roleIntent(current(),draft))
+    if(Object.keys(invalidInputs).length||[...$("detail").querySelectorAll("input")].some(n=>!n.checkValidity()))throw new Error("请先修正输入格式，再保存。")
+    if(selected.startsWith("acp:")){
+      const c=current(),settings=Object.fromEntries(Object.entries(draft.settings).filter(([k,v])=>JSON.stringify(v)!==JSON.stringify(draftBaseline.settings[k])))
+      const behaviorEnv=Object.fromEntries(Object.entries(draft.behaviorEnv||{}).filter(([k,v])=>v!==draftBaseline.behaviorEnv?.[k]))
+      await previewIntent({kind:"acp-settings",agentId:c.id,...(draft.enabled!==draftBaseline.enabled?{enabled:draft.enabled}:{}),...(Object.keys(settings).length?{settings}:{}),...(Object.keys(behaviorEnv).length?{behaviorEnv}:{})})
+    }else await previewIntent(roleIntent(draftBaseline,draft,current()),true)
   }))
-  if(current()?.settings)save.dataset.write=""
+  const c=current(),available=c?.settings&&(!selected.startsWith("acp:")||(c.exists&&c.editable&&Object.entries(draft.settings).every(([k,v])=>JSON.stringify(v)===JSON.stringify(draftBaseline.settings[k])||c.settings[k]?.editable)&&Object.entries(draft.behaviorEnv||{}).every(([k,v])=>v===draftBaseline.behaviorEnv?.[k]||c.env?.find(e=>e.key===k)?.editable)&&(draft.enabled===draftBaseline.enabled||c.membershipEditable)))
+  if(available)save.dataset.write=""
   else {save.disabled=true;box.append(el("p","配置暂不可用，保存已暂停；草稿仍保留。修复配置后刷新并重新核对。","muted"))}
   actions.append(btn("取消修改",()=>open(selected)),save);box.append(actions)
 }
-async function previewIntent(intent){
+function enhancePicker(select,title){
+  select.hidden=true
+  const trigger=btn(select.selectedOptions[0]?.textContent||title,()=>{
+    const dialog=el("dialog",undefined,"picker"),head=el("div",undefined,"heading"),search=el("input"),list=el("div")
+    search.type="search";search.placeholder="搜索";search.setAttribute("aria-label",`搜索${title}`)
+    list.setAttribute("role","listbox");list.className="picker-options";list.id="picker-options";dialog.setAttribute("aria-label",title)
+    const close=()=>dialog.close()
+    head.append(el("strong",title),btn("返回",close));dialog.append(head,search,list);document.body.append(dialog)
+    const render=()=>{
+      list.replaceChildren()
+      for(const option of [...select.options].filter(o=>o.textContent.toLowerCase().includes(search.value.toLowerCase()))){
+        const row=btn(option.textContent,()=>{select.value=option.value;select.dispatchEvent(new Event("change",{bubbles:true}));trigger.textContent=option.textContent;close()})
+        row.setAttribute("role","option");row.setAttribute("aria-selected",String(select.value===option.value));list.append(row)
+      }
+      if(!list.children.length)list.append(el("p","没有匹配项；请修改搜索词。","muted"))
+    }
+    search.oninput=render;search.onkeydown=e=>{if(e.key==="ArrowDown"){e.preventDefault();list.querySelector("button")?.focus()}}
+    list.onkeydown=e=>{const rows=[...list.querySelectorAll("button")],i=rows.indexOf(document.activeElement);if(e.key==="ArrowDown"||e.key==="ArrowUp"){e.preventDefault();rows[(i+(e.key==="ArrowDown"?1:-1)+rows.length)%rows.length]?.focus()}}
+    dialog.onclose=()=>{trigger.setAttribute("aria-expanded","false");dialog.remove();trigger.focus()}
+    trigger.setAttribute("aria-expanded","true");render();dialog.showModal();search.focus()
+  })
+  trigger.className="picker-trigger";trigger.disabled=select.disabled;trigger.setAttribute("role","combobox");trigger.setAttribute("aria-label",title);trigger.setAttribute("aria-expanded","false");trigger.setAttribute("aria-haspopup","dialog")
+  select.insertAdjacentElement("afterend",trigger)
+}
+function renderAcp(box,c){
+  const title=el("h2",`${c.id} · ACP 代理`);title.id="detail-title";title.tabIndex=-1;box.append(title)
+  box.append(el("p","配置外部代理连接，不在这里运行命令或验证连接。","muted"))
+  if(c.reason)box.append(el("p",c.reason,"muted"))
+   const enabled=el("input");enabled.type="checkbox";enabled.id="enabled";enabled.checked=draft.enabled===true;enabled.indeterminate=c.enabled===null;enabled.disabled=!c.editable||!c.exists||c.membershipEditable===false||c.enabled===null
+   const label=el("label",undefined,"check");label.append(enabled,el("span","启用（配置）"));enabled.onchange=()=>{draft.enabled=enabled.checked;change()};box.append(label)
+   if(c.membershipReason||c.enabled===null)box.append(el("p",c.membershipReason||"启用状态无法读取；请修复配置后刷新。","muted"))
+  const names={command:"可执行程序",args:"参数（JSON 字符串数组）",cwd:"工作目录",wrapperModel:"包装层模型",timeoutMs:"超时（毫秒）",permissionMode:"权限策略"}
+  for(const [key,control] of Object.entries(c.settings)){
+    const label=el("label",names[key]||key);label.htmlFor=`acp-${key}`
+    const input=el(key==="permissionMode"?"select":"input");input.id=`acp-${key}`
+    if(key==="permissionMode"){for(const v of ["ask","allow","reject"]){const o=el("option",v);o.value=v;input.append(o)}}
+    else input.type=key==="timeoutMs"?"number":"text"
+    input.value=invalidInputs[key]?.raw??(key==="args"?JSON.stringify(draft.settings[key]??[]):draft.settings[key]??"")
+    if(invalidInputs[key])input.setCustomValidity(invalidInputs[key].message)
+    input.disabled=!control.editable||!c.exists
+    if(key==="timeoutMs"){input.min="0";input.max="2147483647";input.step="1"}
+    input.oninput=()=>{try{
+      let value=input.value
+      if(key==="args"){value=JSON.parse(value);if(!Array.isArray(value)||!value.every(v=>typeof v==="string"))throw Error("参数必须是 JSON 字符串数组")}
+      if(key==="timeoutMs"){value=Number(value);if(!input.value||!Number.isInteger(value)||value<0||value>2147483647)throw Error("超时必须是有效非负整数")}
+      if(["cwd","wrapperModel"].includes(key)&&value==="")value=null
+       draft.settings[key]=value;delete invalidInputs[key];input.setCustomValidity("");change()
+     }catch(e){invalidInputs[key]={raw:input.value,message:e.message};input.setCustomValidity(e.message);change();notice(e.message,true)}}
+     const descriptions={command:"可执行程序名称或路径；不在此运行。",args:"每个参数单独一个字符串；不是 shell 命令。",cwd:"留空使用会话目录。",wrapperModel:"仅控制包装层，不是 ACP 内部模型。",timeoutMs:"0 表示不设限。",permissionMode:"内部权限策略；宿主启动权限仍单独生效。"}
+     const row=el("div",undefined,"setting-row"),text=el("div")
+     text.append(label,el("p",control.reason||descriptions[key],"source"));row.append(text,input);box.append(row)
+  }
+  box.append(el("p","包装层模型不是 ACP 内部模型；权限策略不是启停。超时 0 表示不设限；清空工作目录使用会话目录。","muted"))
+   if(c.editable&&(!c.exists||!c.settings.command.present))box.append(btn("创建 / 补齐项目配置",()=>action(async()=>{
+    requireClean();await previewIntent({kind:"acp-create",agentId:c.id,settings:{command:c.suggestion.command,args:c.suggestion.args}})
+  })),el("p",`建议：${c.suggestion.command} ${JSON.stringify(c.suggestion.args)}。这是可移植建议，不代表已安装或连接成功；已有字段保留。`,"muted"))
+   const environment=el("details");environment.append(el("summary","环境与项目行为"),el("p","只修改本地环境覆盖，不读取进程环境，也不验证运行中状态。","muted"))
+   for(const item of c.env||[]){
+     const description=behaviorLabels[item.key]
+     if(!description){environment.append(el("p",`${item.key}：${item.key==="ANTHROPIC_MODEL"?"内部模型的可用列表未验证，保持只读。":"等级取决于当前内部模型与运行时限制，保持只读。"}`,"source"));continue}
+     const row=el("div",undefined,"setting-row"),text=el("div"),label=el("label",description[0]),select=el("select")
+     select.id=`behavior-${item.key}`;label.htmlFor=select.id
+     text.append(label,el("p",description[1],"source"))
+     const editable=c.id==="claude"&&c.exists&&item.editable
+     if(!editable){const option=el("option",item.present?"现有值受保护，保留且不回显":"继承 / 未设置本地覆盖");option.value="readonly";select.append(option);select.disabled=true;text.append(el("p",item.reason||"当前配置不可编辑。","source"))}
+     else{
+       for(const [value,title] of [["inherit","继承（删除本地覆盖）"],["1","禁用（写入 1）"],["0","不禁用（写入 0）"]]){const option=el("option",title);option.value=value;select.append(option)}
+       select.value=draft.behaviorEnv?.[item.key]??"inherit"
+       select.onchange=()=>{draft.behaviorEnv[item.key]=select.value==="inherit"?null:select.value;change()}
+       text.append(el("p",item.present?"当前有本地覆盖。":"未设置本地覆盖；进程环境未知。","source"))
+     }
+     row.append(text,select);environment.append(row)
+   }
+  box.append(environment)
+  if(c.exists&&c.editable){const check=el("input");check.type="checkbox";const consent=el("label",undefined,"check");consent.append(check,el("span","允许采用项目指导并替换已识别的内联覆盖。"));box.append(consent,btn("更新项目指导",()=>action(async()=>{requireClean();if(!check.checked)throw Error("请确认采用范围");await previewIntent({kind:"adopt-content",capabilityId:`${c.id}-acp-guidance`,confirmInlineReplacement:true})})))}
+  const save=el("div");save.id="save";box.append(save);renderSave()
+}
+async function previewIntent(intent,auto=false){
   const owner=selected,epoch=generation
   const result=await call("POST","/intent-preview",{revision:snapshot.revision,intent})
   if(owner!==selected||epoch!==generation){notice("设置已变化，旧预览已丢弃。请重新保存。");return}
-  showPreview(result)
+  if(auto&&!result.changes.some(c=>c.risk)){
+    await call("PATCH","/config",{previewId:result.previewId})
+    if(owner===selected&&epoch===generation){await refresh(false);notice("已保存；运行中状态未确认。")}
+  }else showPreview(result)
 }
 function showPreview(result){
   preview=result;$("confirmation").hidden=false;$("summary").replaceChildren()
@@ -149,7 +256,7 @@ function showPreview(result){
   for(const w of result.warnings||[])$("summary").append(el("p",w,"muted"))
   $("expiry").textContent=`预览有效至 ${result.expiresAt}`
   $("risk").replaceChildren()
-  if(result.changes.some(c=>c.risk)){const label=el("label",undefined,"check"),check=el("input");check.type="checkbox";check.id="risk-check";check.onchange=lock;label.append(check,el("span","确认本次列出的风险修改。"));$("risk").append(label)}
+   if(result.changes.some(c=>c.risk)){const label=el("label",undefined,"check"),check=el("input");check.type="checkbox";check.id="risk-check";check.onchange=lock;label.append(check,el("span",result.changes.some(c=>c.risk==="behavior-change")?"我已核对本次 Claude 行为变化；它可能影响记忆、内置工作流或后台任务。保存不代表运行中已生效。":"确认本次列出的风险修改。"));$("risk").append(label)}
   $("confirm-title").focus();lock()
 }
 $("cancel-preview").onclick=()=>{invalidate();$("detail-title")?.focus()}
@@ -160,7 +267,8 @@ $("commit").onclick=()=>action(async()=>{
   await call("PATCH","/config",{previewId:preview.previewId,...(risk?{confirmRisk:true}:{})})
   if(owner!==selected||epoch!==generation){invalidate();notice("已提交旧预览；当前草稿保留，请重新读取核对。");return}
   invalidate()
-  if(current()?.settings)draft={enabled:current().settings.enabled,model:current().settings.model.value,variant:current().settings.variant.value,variantChosen:false}
+  if(selected?.startsWith("acp:"))draft=structuredClone(draftBaseline)
+  else if(current()?.settings)draft={enabled:current().settings.enabled,model:current().settings.model.value,variant:current().settings.variant.value,variantChosen:false}
   await refresh(false);notice("已保存到磁盘 · 运行中未确认。需要时通过宿主 UI 重载。")
 })
 async function refresh(preserve=true){
@@ -203,7 +311,7 @@ function renderGuard(){
 $("refresh").onclick=()=>refresh().catch(showError)
 window.addEventListener("beforeunload",e=>{if(dirty()){e.preventDefault();e.returnValue=""}})
 setInterval(lock,15000)
-try{host=connectHost();await Promise.all([
+try{host=connectHost();host.onReady?.(context=>applyHostReady(context,document.documentElement));await Promise.all([
   refresh().catch(showError),
   call("GET","/contributions").then(data=>{contributions=data;renderGuard()}).catch(showError),
 ])}catch(e){showError(e)}
