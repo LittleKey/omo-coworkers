@@ -1,47 +1,23 @@
 <!doctype html>
 <html lang="zh-CN">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="color-scheme" content="light dark">
-  <title>OMO 配置管理器</title>
-  <link rel="stylesheet" href="./panel.css">
-</head>
-<body>
-<main>
-  <header><div><p class="eyebrow">OMO COWORKERS</p><h1>配置管理器</h1><p class="muted">直接管理原生文件，保留你的个人配置。</p></div><button id="refresh" type="button">重新读取</button></header>
-  <section class="target" aria-labelledby="target-title"><h2 id="target-title">编辑目标</h2><dl id="status"><dt>磁盘配置</dt><dd>正在连接本地服务…</dd><dt>运行中配置</dt><dd>未确认</dd></dl></section>
-  <div id="notice" role="status" aria-live="polite"></div>
-  <div id="diagnostics" aria-label="诊断与处理建议"></div>
-  <nav aria-label="管理入口" class="tabs">
-    <button type="button" data-view="config" aria-current="page">配置</button>
-    <button type="button" data-view="templates">增强模板</button>
-    <button type="button" data-view="contributions">扩展内容</button>
-    <button type="button" data-view="history">变更记录</button>
-  </nav>
-  <section id="view-config" class="view" aria-labelledby="config-title">
-    <div class="section-heading"><div><h2 id="config-title">磁盘上的配置</h2><p class="muted">普通值可编辑；受保护值留在服务端，不会发送到面板。</p></div></div>
-    <div class="workspace"><aside id="resources" aria-label="配置资源"></aside><div id="editor"><p class="empty">正在读取配置结构…</p></div></div>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="color-scheme" content="light dark"><title>OMO 项目能力</title><link rel="stylesheet" href="./panel.css"></head>
+<body><main>
+  <header><div><p class="eyebrow">OMO COWORKERS</p><h1>项目能力</h1><p class="muted">项目维护内容，你选择如何使用。</p></div><button id="refresh" type="button">刷新</button></header>
+  <p id="notice" role="status" aria-live="polite"></p>
+  <div id="leave" class="callout" hidden><strong>有尚未保存的设置</strong><p>继续编辑，或明确放弃后离开。</p><div class="actions"><button id="stay">继续编辑</button><button id="discard-leave">放弃并离开</button></div></div>
+  <div class="workspace" id="workspace">
+    <nav id="list" aria-label="项目能力"><p class="muted">正在读取能力…</p></nav>
+    <section id="detail" aria-label="能力设置"><p class="empty">选择一项能力，查看项目内容与可用设置。</p></section>
+  </div>
+  <section id="confirmation" class="callout" hidden aria-labelledby="confirm-title">
+    <h2 id="confirm-title" tabindex="-1">确认本次修改</h2><div id="summary"></div><p id="expiry" class="muted"></p><div id="risk"></div>
+    <div class="actions"><button id="commit" class="primary">确认保存</button><button id="cancel-preview">返回设置</button></div>
   </section>
-  <section id="view-templates" class="view" hidden aria-labelledby="templates-title">
-    <div class="section-heading"><div><h2 id="templates-title">模板配方 · 按需生成修改</h2><p class="muted">模板不长期托管配置，也不提供永久按模板移除。匹配内容无需修改；不同个人值默认保留，只有明确选择后才替换。</p></div></div>
-    <div id="templates" class="cards"></div>
-    <section class="subsection"><h3>我的模板</h3><p class="muted">从选定的普通配置项保存；秘密与机器专属值不会导出。</p><div id="user-templates"></div><div id="template-create"></div></section>
-  </section>
-  <section id="view-contributions" class="view" hidden aria-labelledby="contributions-title">
-    <h2 id="contributions-title">随扩展贡献的内容</h2><p class="muted">已贡献、行为已开启和运行中已加载是不同状态。这里不安装或复制插件。</p><div id="contributions"></div>
-  </section>
-  <section id="view-history" class="view" hidden aria-labelledby="history-title">
-    <h2 id="history-title">最近变更</h2><p class="muted">保留最近十次，不设时间期限。撤销也先预览差异；同字段冲突或容量不足可能拒绝，不强制覆盖，不保证无限重做。</p><div id="history"></div><div id="recovery"></div><div id="migration"></div>
-  </section>
-  <section id="preview-section" hidden aria-labelledby="preview-title">
-    <div class="section-heading"><div><p class="eyebrow">保存之前</p><h2 id="preview-title" tabindex="-1">本次内容差异</h2></div><button id="cancel" type="button">返回编辑</button></div>
-    <p id="expiry" class="muted"></p><div id="warnings"></div><div id="changes"></div><div id="risk-confirmation"></div>
-    <div class="actions"><button id="proceed" class="primary" type="button" disabled>保存到磁盘</button><span id="proceed-reason" class="muted"></span></div>
-  </section>
-  <div class="savebar"><div><strong id="draft-status">没有未保存修改</strong><p id="save-reason" class="muted">读取配置后即可编辑普通字段。</p></div><div class="actions"><button id="discard" type="button" disabled>放弃草稿</button><button id="preview" type="button" class="primary" disabled>查看差异</button></div></div>
-  <footer><p>保存不等于运行中已生效。需要时请通过宿主 UI 重载，再核对新会话；面板不会自动重启。</p><details><summary>权限与数据边界</summary><p>本地服务使用宿主 Node 权限，并非操作系统文件沙箱。安装、启动和更新不自动写入原生配置。已有秘密不提供查看或替换；高级视图仅为受保护投影，保存使用小型字段修改而非覆盖整份配置。</p></details></footer>
-</main>
-<script type="module" src="./app.js"></script>
-</body>
-</html>
+  <details class="support"><summary>环境、扩展与恢复</summary>
+    <p class="muted">编辑默认 HOME/XDG 候选目录，不代表运行中实例正在使用它。自定义根暂不支持。服务使用宿主 Node 权限，不是操作系统沙箱。</p>
+    <div id="diagnostics"></div><div id="guard"></div>
+    <details><summary>最近修改与恢复</summary><p class="muted">最近十次，无时间期限；撤销先预览，冲突或容量不足会停止。</p><div id="history"></div><div id="recovery"></div></details>
+    <p class="muted">其他 OMO 配置不会在此编辑；当前服务未提供其只读摘要。</p>
+  </details>
+  <footer>保存不等于运行中生效。需要时通过宿主 UI 重载并核对新会话；这里不切换会话、不自动重启。</footer>
+</main><script type="module" src="./app.js"></script></body></html>

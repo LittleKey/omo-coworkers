@@ -221,7 +221,7 @@ export const recipeState = {
       resourceId: m.target.resourceId ?? 'user-templates', field: m.target.field ?? [m.target.templateId],
       action: m.after.exists ? 'set' : 'delete',
       beforeExists: m.before.exists, afterExists: m.after.exists,
-      ...(m.target.category === 'ordinary' ? { before: m.before.value, after: m.after.value } : { beforeHash: m.before.exists ? hash(JSON.stringify(m.before.value)) : null, afterHash: m.after.exists ? hash(JSON.stringify(m.after.value)) : null }),
+      ...(['ordinary', 'membership'].includes(m.target.category) ? { before: m.before.value, after: m.after.value } : { beforeHash: m.before.exists ? hash(JSON.stringify(m.before.value)) : null, afterHash: m.after.exists ? hash(JSON.stringify(m.after.value)) : null }),
       risk: !m.after.exists ? 'delete' : m.target.field?.some(k => ['permission', 'permissions', 'permissionMode', 'command', 'args', 'cwd'].includes(k)) ? 'permission-or-execution' : null,
     }));
   },

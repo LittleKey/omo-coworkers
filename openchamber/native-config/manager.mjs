@@ -6,6 +6,7 @@ import { parse, edit, hash, NativeError } from './generator.mjs';
 import { listTemplates, composeTemplate } from './templates.mjs';
 import { recipeState } from './recipe-state.mjs';
 import { recipeIntents } from './recipe-intents.mjs';
+import { capabilities } from './capabilities.mjs';
 
 const id = () => crypto.randomBytes(16).toString('hex');
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
@@ -21,6 +22,7 @@ const forbidden = p => p.some(k => /^(env|headers?|authorization|api.?key|token|
 const promptKey = p => /^(prompt|appendPrompt|orchestratorPrompt|description)$/.test(p.at(-1));
 const nativeSchema = JSON.parse(fs.readFileSync(new URL('./schema/omo-3.0.8.json', import.meta.url), 'utf8'));
 function schemaAt(p) {
+  if (p.length === 4 && p[0] === 'presets' && p[2] !== 'agents') p = [p[0], p[1], 'agents', p[2], p[3]];
   let s = nativeSchema;
   for (const k of p) {
     if (s.oneOf || s.anyOf) s = (s.oneOf ?? s.anyOf).find(v => v.type === 'object') ?? {};
@@ -43,6 +45,7 @@ const contextKnown = p => p.length === 1 && ['preset', 'defaultAgent', 'autoUpda
   p.length === 3 && ['agents', 'acpAgents'].includes(p[0]) ||
   p.length === 3 && p[0] === 'presets' && p[2] === 'extends' ||
   p.length === 5 && p[0] === 'presets' && p[2] === 'agents' ||
+  p.length === 4 && p[0] === 'presets' && p[2] !== 'agents' ||
   p.length >= 4 && ['agents', 'acpAgents'].includes(p[0]) && ['permission', 'permissions'].includes(p[2]);
 function classification(p, value) {
   if (!contextKnown(p) || !Object.keys(schemaAt(p)).length || forbidden(p) || sensitive(value)) return 'protected';
@@ -311,7 +314,7 @@ export class ConfigManager {
   }
   checkNativeTarget(t, live = false) {
     if (!exactKeys(t, ['resourceId', 'logical', 'relative', 'links', 'kind', 'field', 'category']) ||
-        !['config', 'prompt'].includes(t.kind) || !validPath(t.field) || !['ordinary', 'prompt'].includes(t.category) ||
+        !['config', 'prompt'].includes(t.kind) || !validPath(t.field) || !['ordinary', 'prompt', 'membership', 'presence'].includes(t.category) ||
         t.kind === 'config' && (!['oh-my-opencode-slim.json', 'oh-my-opencode-slim.jsonc'].includes(t.logical) || !t.field.length) ||
         t.kind === 'prompt' && (!/^oh-my-opencode-slim\/(?:[a-zA-Z0-9_-]+\/)?[a-zA-Z0-9_-]+\.md$/.test(t.logical) || t.field.length)) fail('RECOVERY_REQUIRED');
     if (typeof t.relative !== 'string' || path.isAbsolute(t.relative) || t.relative.split('/').some(k => !k || k === '.' || k === '..') || !Array.isArray(t.links)) fail('RECOVERY_REQUIRED');
@@ -324,11 +327,27 @@ export class ConfigManager {
     }
   }
   checkNativeValue(t, value) {
+    if (t.category === 'membership') {
+      if (t.kind !== 'config' || t.field.length !== 2 || t.field[0] !== 'disabled_agents' || !['document-writer', 'lark-operator'].includes(t.field[1]) || typeof value !== 'boolean') fail('INVALID_VALUE');
+      return;
+    }
+    if (t.category === 'prompt' && ['prompt', 'appendPrompt'].includes(t.field.at(-1)) && contextKnown(t.field) && typeof value === 'string') {
+      validateValue(t.field, value, 'prompt'); return;
+    }
     if (t.kind === 'config' && (t.category === 'prompt' ? classification(t.field, value) !== 'prompt' : classification(t.field, value) !== 'ordinary')) fail('PROTECTED_FIELD');
     validateValue(t.field, value, t.category);
   }
   nativeCell(t) {
     const data = this.readResource({ ...t, id: t.resourceId });
+    if (t.category === 'presence') {
+      if (t.kind !== 'config' || t.field.length !== 4 || t.field[0] !== 'presets' || t.field[2] !== 'agents' || !['document-writer', 'lark-operator'].includes(t.field[3])) fail('INVALID_VALUE');
+      return { exists: true, value: own(get(data.object, t.field.slice(0, -1)) ?? {}, t.field.at(-1)) };
+    }
+    if (t.category === 'membership') {
+      const members = data.object.disabled_agents ?? ['observer'];
+      if (!Array.isArray(members) || members.some(v => typeof v !== 'string')) fail('INVALID_VALUE');
+      return { exists: true, value: members.includes(t.field[1]) };
+    }
     const value = t.kind === 'prompt' ? data.object : get(data.object, t.field);
     return { exists: value !== undefined, value: value ?? null };
   }
@@ -409,11 +428,18 @@ export class ConfigManager {
       const e = group[0], r = { id: e.resourceId, logical: e.logical, relative, links: e.links, kind: e.kind };
       const data = this.readResource(r); let text = data.text;
       if (side === 'after') for (const entry of group) {
-        const current = e.kind === 'config' ? get(data.object, entry.field) : data.object;
+        const current = entry.category === 'membership' ? (data.object.disabled_agents ?? ['observer']).includes(entry.field[1]) : e.kind === 'config' ? get(data.object, entry.field) : data.object;
         if (!same(current, entry.beforeExists ? entry.before : undefined)) fail('CONFLICT', e.resourceId, entry.field);
       }
       for (const entry of group) {
         const value = entry[side + 'Exists'] ? entry[side] : undefined;
+        if (entry.category === 'membership') {
+          const object = parse(text), members = object.disabled_agents ?? ['observer'];
+          if (!Array.isArray(members) || members.some(v => typeof v !== 'string')) fail('INVALID_VALUE');
+          const next = members.filter(v => v !== entry.field[1]);
+          if (value) next.push(entry.field[1]);
+          text = edit(text, ['disabled_agents'], next); continue;
+        }
         text = e.kind === 'config' ? value === undefined && get(parse(text), entry.field) === undefined ? text : edit(text, entry.field, value) : value;
       }
       if (text !== undefined) byteLimit(text);
@@ -435,3 +461,4 @@ export class ConfigManager {
 export { exactKeys, classification };
 
 Object.assign(ConfigManager.prototype, recipeState, recipeIntents);
+Object.assign(ConfigManager.prototype, capabilities);

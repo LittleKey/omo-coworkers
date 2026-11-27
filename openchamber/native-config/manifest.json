@@ -1,6 +1,13 @@
 {
   "format": 1,
-  "version": "6.0.0",
+  "version": "7.0.0",
+  "capabilities": {
+    "document-role": {"required":["maintaining-product-engineering-docs"],"optional":["domain-modeling","humanizer"],"readiness":"unknown"},
+    "lark-role": {"required":[],"optional":[],"readiness":"unknown"},
+    "collaboration": {"required":[],"optional":[],"readiness":"unknown"},
+    "antigravity-acp-guidance": {"required":[],"optional":[],"readiness":"unknown"},
+    "claude-acp-guidance": {"required":[],"optional":[],"readiness":"unknown"}
+  },
   "compatibility": {
     "omo": "3.0.8",
     "opencode": "2.4.2",

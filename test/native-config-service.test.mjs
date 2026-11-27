@@ -36,16 +36,16 @@ test('API2 finite authenticated routes; startup/status/preview read-only; no arb
   const { root, manager } = fixture(t), before = diskSnapshot(root);
   const request = await serve(t, root, manager);
   assert.deepEqual(diskSnapshot(root), before);
-  for (const route of ['/health', '/status', '/snapshot', '/templates', '/contributions']) assert.equal((await request(route, undefined, { auth: false })).status, 401);
+   for (const route of ['/health', '/status', '/snapshot', '/models', '/contributions']) assert.equal((await request(route, undefined, { auth: false })).status, 401);
   assert.equal((await request('/health')).status, 200);
   const snap = await (await request('/status')).json();
   assert.equal(snap.runtimeVerified, false);
   assert.equal((await request('/arbitrary')).status, 404);
-  assert.equal((await request('/preview', {})).status, 400);
-  const preview = await (await request('/preview', { revision: snap.revision, operations: [op('test/new')] })).json();
+   assert.equal((await request('/preview', {})).status, 410);
+   const preview = await (await request('/intent-preview', { revision: snap.revision, intent: { kind: 'role-settings', capabilityId: 'document-role', model: 'test/new', variant: null } })).json();
   assert.ok(preview.previewId);
   assert.deepEqual(diskSnapshot(root), before);
-  assert.equal((await request('/preview', { revision: snap.revision, operations: [op('test/new')], path: '/escape' })).status, 400);
+   assert.equal((await request('/intent-preview', { revision: snap.revision, intent: { kind: 'role-settings', capabilityId: 'document-role', model: 'test/new', variant: null }, path: '/escape' })).status, 400);
   assert.equal((await request('/config', { previewId: preview.previewId, bytes: 'bad' }, { method: 'PATCH' })).status, 400);
   assert.equal((await request('/config', { huge: 'x'.repeat(64000) }, { method: 'PATCH' })).status, 413);
   assert.deepEqual(diskSnapshot(root), before);
@@ -67,7 +67,7 @@ test('pending WAL reads/previews never recover; only confirmed recovery mutates 
   const status = await (await request('/status')).json();
   assert.ok(status.diagnostics.some(d => d.code === 'RECOVERY_REQUIRED'));
   // API2 allows read-only inspection/preview while WAL exists, but saving is blocked.
-  const inspection = await (await request('/preview', { revision: status.revision, operations: [op('test/next')] })).json();
+   const inspection = await (await request('/intent-preview', { revision: status.revision, intent: { kind: 'role-settings', capabilityId: 'document-role', model: 'test/next', variant: null } })).json();
   assert.ok(inspection.previewId);
   assert.equal((await request('/config', { previewId: inspection.previewId }, { method: 'PATCH' })).status, 409);
   assert.deepEqual(diskSnapshot(root), before);
