@@ -1,9 +1,10 @@
-export const VERSION = "7.1.1"
+export const VERSION = "7.1.2"
 const routes = new Set(["GET /snapshot", "GET /models", "GET /contributions", "POST /intent-preview", "PATCH /config", "PATCH /settings", "POST /undo-preview", "POST /recover", "POST /migration-preview"])
 export async function request(host, method, path, body) {
   if (!routes.has(`${method} ${path}`)) throw new Error("INVALID_ROUTE")
-  if (body && new TextEncoder().encode(JSON.stringify(body)).length > 63000) throw new Error("请求过大")
-  const result = await host.serviceRequest({method,path,...(body ? {body} : {})})
+  const serializedBody = body === undefined ? undefined : JSON.stringify(body)
+  if (serializedBody !== undefined && new TextEncoder().encode(serializedBody).length > 63000) throw new Error("请求过大")
+  const result = await host.serviceRequest({method,path,...(serializedBody === undefined ? {} : {body:serializedBody})})
   let data
   try { data = typeof result.body === "string" ? JSON.parse(result.body) : result.body } catch {}
   if (result.status < 200 || result.status >= 300 || !data?.ok) {

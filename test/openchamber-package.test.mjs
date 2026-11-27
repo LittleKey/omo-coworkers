@@ -38,7 +38,7 @@ test("root extension cold-loads offline without node_modules; optional installed
       assert.equal(folder, join(target, "openchamber/plugin"))
       const nested = JSON.parse(await fs.readFile(join(folder, "package.json"), "utf8"))
       assert.equal(nested.type, "module")
-      assert.equal(pkg.version, "7.1.1")
+      assert.equal(pkg.version, "7.1.2")
       assert.equal(nested.version, pkg.version)
       assert.equal(pkg.openchamber.engines.openchamber, ">=2.8.0")
       assert.equal(pkg.openchamber.contributes.panel.entry, "openchamber/panel/index.html")

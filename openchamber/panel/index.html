@@ -19,5 +19,13 @@
     <details><summary>最近修改与恢复</summary><p class="muted">最近十次，无时间期限；撤销先预览，冲突或容量不足会停止。</p><div id="history"></div><div id="recovery"></div></details>
     <p class="muted">其他 OMO 配置不会在此编辑；当前服务未提供其只读摘要。</p>
   </details>
+  <details id="trace-panel" class="trace-panel" open>
+    <summary>临时诊断日志</summary>
+    <p class="muted">本页已启用，最多保留 100 条内存记录；关闭或重载页面即丢失。不记录配置内容、提示词或凭据。发送记录仅表示面板调用 SDK，不能证明宿主收到请求或服务开始处理。</p>
+    <div class="actions"><button id="trace-copy" type="button">复制日志</button><button id="trace-clear" type="button">清空日志</button></div>
+    <label for="trace-output">安全请求元数据（可手动选择复制）</label>
+    <textarea id="trace-output" readonly spellcheck="false" aria-describedby="trace-status">[]</textarea>
+    <p id="trace-status" class="muted" role="status">仅点击复制才会写入剪贴板；不会自动上传或保存日志。</p>
+  </details>
   <footer>保存不等于运行中生效。需要时通过宿主 UI 重载并核对新会话；这里不切换会话、不自动重启。</footer>
 </main><script type="module" src="./app.js"></script></body></html>

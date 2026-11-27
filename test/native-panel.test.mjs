@@ -8,6 +8,26 @@ test("finite capability API excludes retired arbitrary editing",async()=>{
   await request(host,"GET","/models");await request(host,"POST","/intent-preview",{revision:"r",intent:{kind:"role-settings",capabilityId:"document-role",enabled:false}})
   for(const path of ["/preview","/reveal","/template-preview","/user-templates"])await assert.rejects(request(host,"POST",path,{}),/INVALID_ROUTE/)
   assert.equal(calls.length,2)
+  assert.equal(Object.hasOwn(calls[0],"body"),false)
+  assert.equal(typeof calls[1].body,"string")
+  assert.deepEqual(JSON.parse(calls[1].body),{revision:"r",intent:{kind:"role-settings",capabilityId:"document-role",enabled:false}})
+})
+test("all mutation routes serialize once and enforce the wire byte limit",async()=>{
+  const calls=[],host={serviceRequest:async value=>{
+    assert.equal(typeof value.body,"string","host service-request schema requires a string body")
+    calls.push(value)
+    return {status:200,body:'{"ok":true}'}
+  }}
+  for(const [method,path] of [["POST","/intent-preview"],["PATCH","/config"],["PATCH","/settings"],["POST","/undo-preview"],["POST","/recover"],["POST","/migration-preview"]]){
+    const body={text:'中文 "quoted"',enabled:false,optional:null}
+    await request(host,method,path,body)
+    assert.deepEqual(JSON.parse(calls.at(-1).body),body)
+  }
+  await request(host,"POST","/recover",null)
+  assert.equal(calls.at(-1).body,"null")
+  const count=calls.length
+  await assert.rejects(request(host,"POST","/intent-preview",{text:"中".repeat(21000)}),/请求过大/)
+  assert.equal(calls.length,count)
 })
 test("unknown variant preserved; model changes require explicit variant decision",()=>{
   const draft={enabled:true,model:"p/old",variant:"unknown-current",variantChosen:false}
@@ -81,7 +101,11 @@ test("one adaptive DOM, narrow controls, no old editor or generic API",async()=>
   const app=await readFile(new URL("../openchamber/panel/app.js",import.meta.url),"utf8")
   const css=await readFile(new URL("../openchamber/panel/panel.css",import.meta.url),"utf8")
   assert.doesNotMatch(app,/innerHTML|postMessage|localStorage|\/reveal|\/user-templates|document\.querySelector\("main"\)\.inert/)
-  assert.doesNotMatch(html,/data-view|view-templates|新字段|textarea/)
+  assert.doesNotMatch(html,/data-view|view-templates|新字段/)
+  const textareas=html.match(/<textarea\b[^>]*>/g)||[]
+  assert.equal(textareas.length,1)
+  assert.match(textareas[0],/\bid="trace-output"/)
+  assert.match(textareas[0],/\breadonly(?:\s|>)/)
   assert.match(css,/@container/);assert.match(css,/--oc-/);assert.match(css,/safe-area-inset/);assert.match(css,/min-height:44px/)
   assert.match(app,/variantChosen=false/);assert.match(app,/confirmInlineReplacement:true/)
 })

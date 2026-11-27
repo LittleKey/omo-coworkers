@@ -1,6 +1,7 @@
 import { connectHost } from "./vendor/host.js"
 import { applyHostReady } from "./vendor/theme.js"
 import { request, roleIntent, hasChanges, usablePreview, changeSummary } from "./model.js"
+import { createDiagnostics } from "./diagnostics.js"
 const $ = id => document.getElementById(id)
 const el = (tag,text,cls) => { const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n }
 const btn = (text,fn,cls) => { const n=el("button",text,cls);n.type="button";n.onclick=fn;return n }
@@ -17,10 +18,17 @@ const behaviorLabels={
 const current=()=>selected?.startsWith("acp:")?snapshot?.acpAgents?.find(c=>`acp:${c.id}`===selected):snapshot?.capabilities.find(c=>c.id===selected)
 const dirty=()=>Object.keys(invalidInputs).length>0||(selected?.startsWith("acp:")?Boolean(draftBaseline&&draft&&JSON.stringify(draft)!==JSON.stringify(draftBaseline)):hasChanges(draftBaseline,draft))
 const titleOf=c=>({"document-role":"文档协作","lark-role":"飞书操作","collaboration":"协作指导","claude-acp-guidance":"Claude 指导","antigravity-acp-guidance":"Antigravity 指导"})[c.id]||c.title
-const call=(method,path,body)=>request(host,method,path,body)
+const trace=createDiagnostics(()=>{$("trace-output").value=trace.export()})
+const call=(method,path,body)=>request({serviceRequest:input=>trace.serviceRequest(host,input)},method,path,body)
+$("trace-clear").onclick=()=>{trace.clear();$("trace-status").textContent="已清空本页临时日志。"}
+$("trace-copy").onclick=async()=>{
+  const output=$("trace-output"),text=trace.export()
+  try{await navigator.clipboard.writeText(text);$("trace-status").textContent="已复制安全元数据日志。"}
+  catch{output.focus();output.select();$("trace-status").textContent="无法自动复制；已选中日志，请手动复制。"}
+}
 function notice(text,error=false){$("notice").textContent=text;$("notice").dataset.error=String(error)}
 function showError(e){notice(`${e.code || "未完成"} · ${e.message} ${e.nextAction || "请核对设置后重试。"}${e.code==="CONFLICT"?" 草稿已保留；读取最新状态后重新核对。":""}`,true)}
-async function action(fn){if(writing||reading)return;if(needsReadback){notice("提交结果未知。请先点击刷新只读核对；迟到写入仍可能发生，不会自动重试。",true);return}writing=true;lock();try{await fn()}catch(e){showError(e)}finally{writing=false;lock()}}
+async function action(fn){if(writing||reading)return;if(needsReadback){notice("提交结果未知。请先点击刷新只读核对；迟到写入仍可能发生，不会自动重试。",true);return}trace.add("action-begin");writing=true;lock();try{await fn()}catch(e){showError(e)}finally{writing=false;lock()}}
 function lock(){
   for(const n of document.querySelectorAll("[data-write]"))n.disabled=writing||reading||needsReadback
   const detail=$("detail");detail.inert=writing
@@ -149,7 +157,7 @@ function renderSave(){
   if(!dirty())return
   box.append(el("p","有未保存设置 · 不会改写项目提示词或 Skills","muted"))
   const actions=el("div",undefined,"actions")
-  const save=btn("保存设置",()=>action(async()=>{
+  const save=btn("保存设置",()=>{trace.add("save-click");return action(async()=>{
     if(!current()?.settings)throw new Error("配置暂不可用；草稿保留，请修复配置后刷新。")
     if(Object.keys(invalidInputs).length||[...$("detail").querySelectorAll("input")].some(n=>!n.checkValidity()))throw new Error("请先修正输入格式，再保存。")
     if(selected.startsWith("acp:")){
@@ -157,7 +165,7 @@ function renderSave(){
       const behaviorEnv=Object.fromEntries(Object.entries(draft.behaviorEnv||{}).filter(([k,v])=>v!==draftBaseline.behaviorEnv?.[k]))
       await previewIntent({kind:"acp-settings",agentId:c.id,...(draft.enabled!==draftBaseline.enabled?{enabled:draft.enabled}:{}),...(Object.keys(settings).length?{settings}:{}),...(Object.keys(behaviorEnv).length?{behaviorEnv}:{})})
     }else await previewIntent(roleIntent(draftBaseline,draft,current()),true)
-  }))
+  })})
   const c=current(),available=c?.settings&&(!selected.startsWith("acp:")||(c.exists&&c.editable&&Object.entries(draft.settings).every(([k,v])=>JSON.stringify(v)===JSON.stringify(draftBaseline.settings[k])||c.settings[k]?.editable)&&Object.entries(draft.behaviorEnv||{}).every(([k,v])=>v===draftBaseline.behaviorEnv?.[k]||c.env?.find(e=>e.key===k)?.editable)&&(draft.enabled===draftBaseline.enabled||c.membershipEditable)))
   if(available)save.dataset.write=""
   else {save.disabled=true;box.append(el("p","配置暂不可用，保存已暂停；草稿仍保留。修复配置后刷新并重新核对。","muted"))}
@@ -247,10 +255,12 @@ function renderAcp(box,c){
   const save=el("div");save.id="save";box.append(save);renderSave()
 }
 async function previewIntent(intent,auto=false){
+  trace.add("preview-send")
   const owner=selected,epoch=generation
   let result
   try{result=await call("POST","/intent-preview",{revision:snapshot.revision,intent})}
   catch(e){e.message=`预览未完成（未提交写入）：${e.message}`;throw e}
+  trace.add("preview-ready")
   if(owner!==selected||epoch!==generation){notice("设置已变化，旧预览已丢弃。请重新保存。");return}
   if(auto&&!result.changes.some(c=>c.risk)){
     await commitConfig({previewId:result.previewId},owner,epoch)
@@ -276,6 +286,7 @@ $("commit").onclick=()=>action(async()=>{
   await commitConfig({previewId:preview.previewId,...(risk?{confirmRisk:true}:{})},owner,epoch)
 })
 async function commitConfig(body,owner,epoch){
+  trace.add("commit-send")
   try{await call("PATCH","/config",body)}
   catch(e){
     if(e.code==="HOST_TIMEOUT"){
@@ -285,7 +296,7 @@ async function commitConfig(body,owner,epoch){
     }
     e.message=`提交未获确认：${e.message}`;throw e
   }
-  commitUnknown=false
+  trace.add("commit-response");commitUnknown=false
   if(owner!==selected||epoch!==generation){invalidate();notice("已提交旧预览；当前草稿保留，请重新读取核对。");return}
   invalidate()
   try{await refresh(false,true);notice("已保存到磁盘 · 运行中未确认。需要时通过宿主 UI 重载。")}
@@ -305,6 +316,7 @@ async function refreshCatalog(){
 }
 async function refresh(preserve=true,internal=false){
   if(reading||(writing&&!internal))return
+  trace.add("readback")
   const epoch=generation,owner=selected
   reading=true;lock()
   try{
