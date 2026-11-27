@@ -21,6 +21,16 @@ test("server expiry required",()=>{
   assert.equal(usablePreview({previewId:"p"}),false)
   assert.equal(usablePreview({previewId:"p",expiresAt:new Date(Date.now()+60000).toISOString()}),true)
 })
+test("commit readback excludes catalog and timeout requires explicit readback",async()=>{
+  const app=await readFile(new URL("../openchamber/panel/app.js",import.meta.url),"utf8")
+  const refresh=app.slice(app.indexOf("async function refresh(preserve"),app.indexOf("function requireClean"))
+  assert.doesNotMatch(refresh,/\/models|Promise.allSettled/)
+  assert.match(app,/commitUnknown=true;needsReadback=true;invalidate\(\)/)
+  assert.match(app,/epoch!==catalogEpoch/)
+  assert.match(app,/已保存到磁盘，但状态刷新失败/)
+  assert.match(app,/if\(writing\|\|reading\)return/)
+  assert.match(app,/if\(reading\|\|\(writing&&!internal\)\)return/)
+})
 test("role baseline intent merges unrelated changes and rejects dependent conflicts",()=>{
   const draft={enabled:true,model:"p/new",variant:null,variantChosen:true}
   const disabled=structuredClone(role);disabled.settings.enabled=false

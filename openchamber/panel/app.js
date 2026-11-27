@@ -7,6 +7,7 @@ const btn = (text,fn,cls) => { const n=el("button",text,cls);n.type="button";n.o
 let host,snapshot,catalog={catalog:[],variants:{}},contributions,selected,draft,preview,writing=false,reading=false,pendingLeave
 let generation=0
 let draftBaseline=null
+let catalogEpoch=0,catalogStatus="目录尚未读取",commitUnknown=false,needsReadback=false
 let invalidInputs={}
 const behaviorLabels={
   CLAUDE_CODE_DISABLE_CLAUDE_MDS:["禁用 CLAUDE.md 记忆加载","包含用户、项目与自动记忆文件。"],
@@ -19,15 +20,15 @@ const titleOf=c=>({"document-role":"文档协作","lark-role":"飞书操作","co
 const call=(method,path,body)=>request(host,method,path,body)
 function notice(text,error=false){$("notice").textContent=text;$("notice").dataset.error=String(error)}
 function showError(e){notice(`${e.code || "未完成"} · ${e.message} ${e.nextAction || "请核对设置后重试。"}${e.code==="CONFLICT"?" 草稿已保留；读取最新状态后重新核对。":""}`,true)}
-async function action(fn){if(writing)return;writing=true;lock();try{await fn()}catch(e){showError(e)}finally{writing=false;lock()}}
+async function action(fn){if(writing||reading)return;if(needsReadback){notice("提交结果未知。请先点击刷新只读核对；迟到写入仍可能发生，不会自动重试。",true);return}writing=true;lock();try{await fn()}catch(e){showError(e)}finally{writing=false;lock()}}
 function lock(){
-  for(const n of document.querySelectorAll("[data-write]"))n.disabled=writing
+  for(const n of document.querySelectorAll("[data-write]"))n.disabled=writing||reading||needsReadback
   const detail=$("detail");detail.inert=writing
   $("list").inert=writing
   document.querySelector(".support").inert=writing
   $("leave").inert=writing
   $("stay").disabled=$("discard-leave").disabled=writing
-  $("commit").disabled=writing||!usablePreview(preview)||(preview?.changes.some(c=>c.risk)&&!$("risk-check")?.checked)
+  $("commit").disabled=writing||reading||needsReadback||!usablePreview(preview)||(preview?.changes.some(c=>c.risk)&&!$("risk-check")?.checked)
   $("refresh").disabled=reading||writing
   $("cancel-preview").disabled=writing
   if($("risk-check"))$("risk-check").disabled=writing
@@ -123,6 +124,7 @@ function modelControls(box,c){
   box.append(select,el("p",model.reason||(!variant.editable?"思考等级来源只读，暂不能安全切换模型。":`来源：${model.source}`),"source"))
   enhancePicker(select,"选择模型")
   const full=el("p",draft.model||model.inheritedValue||"未解析模型","model-full");select.addEventListener("change",()=>full.textContent=draft.model);box.append(full)
+  const status=el("p",catalogStatus,"muted");status.id="catalog-status";box.append(status)
   box.append(el("p","目录来自宿主 CLI，未验证是否对应当前宿主实例；不代表模型能成功调用。","muted"))
   if(catalog.diagnostics?.length)box.append(el("p",`目录诊断：${catalog.diagnostics.join("、")}。当前未知值会保留，不猜测模型或等级。`,"muted"))
   const region=el("div");box.append(region)
@@ -164,6 +166,12 @@ function renderSave(){
 function enhancePicker(select,title){
   select.hidden=true
   const trigger=btn(select.selectedOptions[0]?.textContent||title,()=>{
+    if(select.id==="model"){
+      for(const value of catalog.catalog)if(![...select.options].some(o=>o.value===value)){const option=el("option",value);option.value=value;select.append(option)}
+    }
+    if(select.id==="variant"){
+      for(const value of catalog.variants[draft.model]||[])if(![...select.options].some(o=>o.value===`id:${value}`)){const option=el("option",value);option.value=`id:${value}`;select.append(option)}
+    }
     const dialog=el("dialog",undefined,"picker"),head=el("div",undefined,"heading"),search=el("input"),list=el("div")
     search.type="search";search.placeholder="搜索";search.setAttribute("aria-label",`搜索${title}`)
     list.setAttribute("role","listbox");list.className="picker-options";list.id="picker-options";dialog.setAttribute("aria-label",title)
@@ -240,11 +248,12 @@ function renderAcp(box,c){
 }
 async function previewIntent(intent,auto=false){
   const owner=selected,epoch=generation
-  const result=await call("POST","/intent-preview",{revision:snapshot.revision,intent})
+  let result
+  try{result=await call("POST","/intent-preview",{revision:snapshot.revision,intent})}
+  catch(e){e.message=`预览未完成（未提交写入）：${e.message}`;throw e}
   if(owner!==selected||epoch!==generation){notice("设置已变化，旧预览已丢弃。请重新保存。");return}
   if(auto&&!result.changes.some(c=>c.risk)){
-    await call("PATCH","/config",{previewId:result.previewId})
-    if(owner===selected&&epoch===generation){await refresh(false);notice("已保存；运行中状态未确认。")}
+    await commitConfig({previewId:result.previewId},owner,epoch)
   }else showPreview(result)
 }
 function showPreview(result){
@@ -264,23 +273,47 @@ $("commit").onclick=()=>action(async()=>{
   if(!usablePreview(preview))throw new Error("预览已失效，请重新保存。")
   const risk=preview.changes.some(c=>c.risk);if(risk&&!$("risk-check")?.checked)throw new Error("请确认本次风险。")
   const owner=selected,epoch=generation
-  await call("PATCH","/config",{previewId:preview.previewId,...(risk?{confirmRisk:true}:{})})
+  await commitConfig({previewId:preview.previewId,...(risk?{confirmRisk:true}:{})},owner,epoch)
+})
+async function commitConfig(body,owner,epoch){
+  try{await call("PATCH","/config",body)}
+  catch(e){
+    if(e.code==="HOST_TIMEOUT"){
+      commitUnknown=true;needsReadback=true;invalidate()
+      notice("提交结果未知（HOST_TIMEOUT）。请求可能已写入或稍后写入。草稿保留；请先刷新只读核对，不会自动重试。",true)
+      return
+    }
+    e.message=`提交未获确认：${e.message}`;throw e
+  }
+  commitUnknown=false
   if(owner!==selected||epoch!==generation){invalidate();notice("已提交旧预览；当前草稿保留，请重新读取核对。");return}
   invalidate()
-  if(selected?.startsWith("acp:"))draft=structuredClone(draftBaseline)
-  else if(current()?.settings)draft={enabled:current().settings.enabled,model:current().settings.model.value,variant:current().settings.variant.value,variantChosen:false}
-  await refresh(false);notice("已保存到磁盘 · 运行中未确认。需要时通过宿主 UI 重载。")
-})
-async function refresh(preserve=true){
+  try{await refresh(false,true);notice("已保存到磁盘 · 运行中未确认。需要时通过宿主 UI 重载。")}
+  catch(e){needsReadback=true;notice(`已保存到磁盘，但状态刷新失败（${e.code||"READ_FAILED"}）。草稿保留；请刷新核对，不要重复提交。`,true)}
+}
+async function refreshCatalog(){
+  const epoch=++catalogEpoch
+  catalogStatus="模型目录读取中；配置操作无需等待。"
+  if($("catalog-status"))$("catalog-status").textContent=catalogStatus
+  try{
+    const next=await call("GET","/models")
+    if(epoch!==catalogEpoch)return
+    catalog=next;catalogStatus="模型目录已更新；重新打开选择器可用。"
+  }catch(e){if(epoch!==catalogEpoch)return;catalogStatus=`模型目录读取失败（${e.code||"READ_FAILED"}）；保留缓存，可点击刷新重试。`}
+  if($("catalog-status"))$("catalog-status").textContent=catalogStatus
+  // Never rebuild detail, move focus, or alter the draft on a catalog response.
+}
+async function refresh(preserve=true,internal=false){
+  if(reading||(writing&&!internal))return
+  const epoch=generation,owner=selected
   reading=true;lock()
   try{
-    const [snapshotResult,modelResult]=await Promise.allSettled([call("GET","/snapshot"),call("GET","/models")])
-    if(modelResult.status==="fulfilled")catalog=modelResult.value
-    else catalog={...catalog,diagnostics:["目录读取失败，可刷新重试"]}
-    if(snapshotResult.status!=="fulfilled")throw snapshotResult.reason
-    const next=snapshotResult.value,wasDirty=dirty()
+    const next=await call("GET","/snapshot"),wasDirty=dirty()
+    if(epoch!==generation||owner!==selected){notice("读取期间设置已变化；草稿保留，请重新刷新。");return}
     snapshot=next;renderSupport();generation++;renderOpen(selected,preserve&&wasDirty)
     if(preserve&&wasDirty)notice("已读取最新状态，草稿保留；请重新核对后保存。")
+    needsReadback=false
+    if(commitUnknown)notice("已只读刷新，原提交结果仍未知；迟到写入仍可能发生。草稿保留，请核对后重新预览，不会自动重试。",true)
   }finally{reading=false;lock()}
 }
 function requireClean(){if(dirty())throw new Error("请先保存或取消当前能力设置，再执行此操作。")}
@@ -290,7 +323,7 @@ function renderSupport(){
     const b=btn(`预览撤销 · ${h.summary}`,()=>action(async()=>{requireClean();showPreview(await call("POST","/undo-preview",{transactionId:h.id}))}));b.disabled=!h.undoable;return b
   }))
   $("recovery").replaceChildren()
-  if(snapshot.diagnostics.some(d=>/RECOVERY|PENDING/.test(d.code)))$("recovery").append(btn("恢复中断写入",()=>action(async()=>{requireClean();await call("POST","/recover",{confirm:true});await refresh();notice("恢复请求完成；请核对最新诊断。")})))
+  if(snapshot.diagnostics.some(d=>/RECOVERY|PENDING/.test(d.code)))$("recovery").append(btn("恢复中断写入",()=>action(async()=>{requireClean();await call("POST","/recover",{confirm:true});await refresh(true,true);notice("恢复请求完成；请核对最新诊断。")})))
   if(snapshot.diagnostics.some(d=>/MIGRATION/.test(d.code))){
     const stopped=el("input"),discard=el("input");stopped.type=discard.type="checkbox"
     const a=el("label",undefined,"check"),b=el("label",undefined,"check")
@@ -308,10 +341,11 @@ function renderGuard(){
   const check=el("input");check.type="checkbox";const label=el("label",undefined,"check");label.append(check,el("span","本次开启会改变工具派发，我已核对重复副本风险。"));if(!s.claudeGuardEnabled)details.append(label)
   details.append(btn(s.claudeGuardEnabled?"关闭 guard":"开启 guard",()=>action(async()=>{requireClean();if(!s.claudeGuardEnabled&&!check.checked)throw new Error("请确认本次行为变化与重复风险。");await call("PATCH","/settings",{revision:s.revision,claudeGuardEnabled:!s.claudeGuardEnabled,...(!s.claudeGuardEnabled?{confirmEnable:true}:{})});contributions=await call("GET","/contributions");renderGuard();notice("行为设置已保存，需按需重载；不属于配置撤销记录。")})));box.append(details)
 }
-$("refresh").onclick=()=>refresh().catch(showError)
+$("refresh").onclick=()=>{void refreshCatalog();refresh().catch(e=>{e.message=`状态读取失败：${e.message}`;showError(e)})}
 window.addEventListener("beforeunload",e=>{if(dirty()){e.preventDefault();e.returnValue=""}})
 setInterval(lock,15000)
 try{host=connectHost();host.onReady?.(context=>applyHostReady(context,document.documentElement));await Promise.all([
+  (void refreshCatalog()),
   refresh().catch(showError),
   call("GET","/contributions").then(data=>{contributions=data;renderGuard()}).catch(showError),
 ])}catch(e){showError(e)}

@@ -1,4 +1,4 @@
-export const VERSION = "7.1.0"
+export const VERSION = "7.1.1"
 const routes = new Set(["GET /snapshot", "GET /models", "GET /contributions", "POST /intent-preview", "PATCH /config", "PATCH /settings", "POST /undo-preview", "POST /recover", "POST /migration-preview"])
 export async function request(host, method, path, body) {
   if (!routes.has(`${method} ${path}`)) throw new Error("INVALID_ROUTE")
