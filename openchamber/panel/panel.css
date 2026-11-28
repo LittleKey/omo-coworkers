@@ -1,5 +1,35 @@
-:root{color-scheme:light dark;--bg:var(--oc-bg,#fff);--fg:var(--oc-fg,#202329);--soft:var(--oc-muted,#f3f4f6);--line:var(--oc-border,#d8dce3);--muted:var(--oc-muted-fg,#626975);--accent:var(--oc-primary,#2962d9)}
+/* SDK muted is foreground; mutedSurface/subtle are surfaces. Keep host pairs together.
+   light-dark() follows the SDK's inline color-scheme, not an overriding OS media rule. */
+:root{
+  color-scheme:light dark;
+  --bg:var(--oc-bg,light-dark(#fff,#191c21));
+  --fg:var(--oc-fg,light-dark(#202329,#e4e7eb));
+  --soft:var(--oc-muted-surface,light-dark(#f3f4f6,#252a32));
+  --selected:var(--oc-subtle,var(--soft));
+  --line:var(--oc-border,light-dark(#d8dce3,#424956));
+  --muted:var(--oc-muted,light-dark(#626975,#aeb6c2));
+  --accent:var(--oc-primary,light-dark(#2962d9,#3475e4));
+  --accent-fg:var(--oc-primary-fg,#fff);
+  --focus:var(--oc-focus,var(--accent));
+  --hover:var(--oc-hover,var(--soft));
+  --elevated:var(--oc-elevated,var(--bg));
+  --elevated-fg:var(--oc-elevated-fg,var(--fg));
+}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px var(--oc-font,system-ui)}[hidden]{display:none!important}button,input,select,textarea{font:inherit;color:inherit}button{cursor:pointer;border:1px solid var(--line);background:var(--bg);border-radius:7px;padding:8px 12px;min-height:44px}button:disabled{opacity:.45;cursor:not-allowed}:focus-visible{outline:2px solid var(--accent);outline-offset:2px}input:not([type=checkbox]),select,textarea{width:100%;min-height:44px;padding:8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);font-size:16px}input[type=checkbox]{width:19px;height:19px;accent-color:var(--accent);flex:none}label.check{display:flex;align-items:center;gap:10px;min-height:44px}small,.muted{color:var(--muted);font-size:.85em}small{display:block;margin-top:5px;overflow-wrap:anywhere}.shell{max-width:900px;margin:auto}header,footer,.row,.heading{display:flex;align-items:center;gap:10px}header{padding:8px 12px;border-bottom:1px solid var(--line)}header nav{display:flex}header button{border:0}header button[aria-current=page]{background:var(--soft);font-weight:650}.target{margin-left:auto;font-size:12px}.badge{font-size:11px;background:var(--soft);padding:3px 6px;border-radius:4px;white-space:nowrap}.layout{display:grid;grid-template-columns:200px minmax(0,1fr);min-height:520px}.sidebar{padding:12px 10px;border-right:1px solid var(--line)}#list{margin-top:8px}#list button{width:100%;text-align:left;border:0;margin-bottom:2px;padding:9px 8px}#list button[aria-current=true]{background:var(--soft)}#list small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.roleline{display:flex;align-items:center;justify-content:space-between;gap:3px;font-size:13px}.detail{padding:22px;min-width:0}.heading{justify-content:space-between;margin-bottom:22px}h1{font-size:19px;margin:0;font-weight:650}h2{font-size:14px;font-weight:600;margin:0}.row{justify-content:space-between;margin:18px 0 8px}.model{width:100%;text-align:left;overflow-wrap:anywhere;min-height:52px}.segments{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 22px}.segments [aria-pressed=true]{border-color:var(--accent);color:var(--accent);background:var(--soft)}details{margin:16px 0}summary{min-height:44px;display:list-item;align-content:center;cursor:pointer}.fields{display:grid;grid-template-columns:1fr 1fr;gap:12px}.fields label{min-width:0}.fields input,.fields select{margin-top:6px}.fields [aria-invalid=true]{border-color:var(--oc-error,#bc3131)}footer{position:sticky;bottom:0;padding:10px 12px calc(10px + env(safe-area-inset-bottom));border-top:1px solid var(--line);background:var(--bg);z-index:1}footer #status{margin-right:auto;font-size:12px}.primary{background:var(--accent);color:#fff;border-color:var(--accent)}.settings{padding:8px 24px 24px}.settings section{padding:18px 0;border-bottom:1px solid var(--line)}.settings h2{margin-bottom:10px}.banner{margin:10px 12px;padding:10px;background:var(--soft);border-left:3px solid var(--accent);overflow-wrap:anywhere}.banner button{margin-left:8px}.back{display:none}dialog{background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:12px;width:min(580px,calc(100% - 24px));max-height:85dvh;padding:22px;overflow:auto}dialog::backdrop{background:#0006}.dialog-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}#options{max-height:55dvh;overflow:auto;margin-top:12px}#options button{width:100%;text-align:left;margin:3px 0;overflow-wrap:anywhere}.diff{padding:12px 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere}.before{color:var(--muted);margin:5px 0}.after{font-weight:500}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12px var(--oc-font-mono,monospace)}
-@media(prefers-color-scheme:dark){:root{--bg:var(--oc-bg,#191c21);--fg:var(--oc-fg,#e4e7eb);--soft:var(--oc-muted,#252a32);--line:var(--oc-border,#424956);--muted:var(--oc-muted-fg,#aeb6c2);--accent:var(--oc-primary,#3475e4)}}
+/* Neutral selected controls match the host's subtle surfaces, not primary fills. */
+header button[aria-current=page],#list button[aria-current=true],.segments [aria-pressed=true]{background:var(--selected);color:var(--fg)}
+.segments [aria-pressed=true]{border-color:var(--muted)}
+.badge{background:var(--soft);color:var(--muted)}
+.primary{background:var(--accent);color:var(--accent-fg)}
+button:disabled{opacity:1;color:var(--muted);background:var(--soft);border-color:var(--line)}
+button:not(:disabled):not(.primary):not([aria-current]):not([aria-pressed=true]):hover{background:var(--hover)}
+:focus-visible{outline-color:var(--focus)}
+input::placeholder,textarea::placeholder{color:var(--muted);opacity:1}
+dialog{background:var(--elevated);color:var(--elevated-fg)}
+dialog button,dialog input,dialog select,dialog textarea{color:var(--fg)}
+dialog .primary{color:var(--accent-fg)}
+dialog button:disabled{color:var(--muted)}
+/* SDK has no overlay token; translucent neutral scrim works with either host scheme. */
+dialog::backdrop{background:rgb(0 0 0 / 40%)}
 @media(max-width:559px){.layout{display:block;min-height:480px}.sidebar{border:0}.detail{display:none;padding:16px 12px}.shell[data-open=true] .sidebar{display:none}.shell[data-open=true] .detail{display:block}.back{display:block;margin-bottom:16px}.settings{padding:0 12px}.fields{grid-template-columns:1fr}.heading{gap:4px}footer{gap:5px}footer button{padding:8px}#restore{font-size:12px}.target{font-size:11px}#picker{width:100%;height:100dvh;max-height:100dvh;max-width:100%;margin:0;border:0;border-radius:0;padding:16px 16px calc(16px + env(safe-area-inset-bottom))}#options{max-height:calc(100dvh - 180px)}}
 @media(prefers-reduced-motion:no-preference){dialog[open]{animation:arrive .12s ease-out}@keyframes arrive{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}}
