@@ -1,6 +1,6 @@
 {
   "name": "omo-coworkers",
-  "version": "8.0.1",
+  "version": "8.0.2",
   "type": "module",
   "description": "OpenChamber capability panel with focused coworker role settings, explicit project-content adoption, and native skills and plugin contributions.",
   "license": "MIT",

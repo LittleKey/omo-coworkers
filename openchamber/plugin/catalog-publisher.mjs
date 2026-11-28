@@ -6,17 +6,20 @@ const text = value => typeof value === 'string' && value.length > 0 &&
 
 // Never serialize provider records, credentials, settings, or arbitrary capabilities.
 export function publicModels(input) {
-  if (!Array.isArray(input) || input.length > 4096) throw new Error('INVALID_CATALOG')
+  if (!input || Array.isArray(input) || typeof input.location?.directory !== 'string' ||
+      !Array.isArray(input.data) || input.data.length > 4096) throw new Error('INVALID_CATALOG')
   const seen = new Set()
-  return input.map(model => {
+  return input.data.map(model => {
     const id = model?.id ?? model?.modelID
     if (!text(model?.providerID) || !text(id)) throw new Error('INVALID_CATALOG')
     const key = JSON.stringify([model.providerID, id])
     if (seen.has(key)) throw new Error('INVALID_CATALOG')
     seen.add(key)
-    const variants = Array.isArray(model.variants) ? model.variants :
-      model.variants && typeof model.variants === 'object' ? Object.keys(model.variants) : []
-    if (variants.length > 128 || !variants.every(text)) throw new Error('INVALID_CATALOG')
+    const entries = model.variants === undefined ? [] : model.variants
+    if (!Array.isArray(entries) || entries.length > 128 ||
+        !entries.every(variant => variant && typeof variant === 'object' &&
+          !Array.isArray(variant) && text(variant.id))) throw new Error('INVALID_CATALOG')
+    const variants = entries.map(variant => variant.id)
     return { providerID: model.providerID, id,
       ...(text(model.name) ? { name: model.name } : {}),
       variants: [...new Set(variants)].sort() }
@@ -48,20 +51,38 @@ export async function setupCatalogPublisher(ctx, {
   now = Date.now, instanceId = randomUUID(),
   schedule = setTimeout, cancel = clearTimeout,
 } = {}) {
-  if (!ctx.rpc?.register || !ctx.model?.list) return { dispose() {} }
+  // Finite, once-per-instance failure classes only; never log host errors or data.
+  const reported = new Set()
+  const diagnose = code => {
+    if (reported.has(code)) return
+    reported.add(code)
+    try { console.warn(`[omo-coworkers.catalog] ${code}`) } catch {}
+  }
+  if (!ctx.rpc?.register || !ctx.model?.list) {
+    diagnose('CAPABILITY_UNAVAILABLE')
+    return { dispose() {} }
+  }
   let registration, disposed = false, inFlight = false, sequence = 0, timer
   const tick = async () => {
     if (disposed || inFlight) return
     inFlight = true
+    let failure = 'FETCH_FAILED'
     try {
-      const models = publicModels(await ctx.model.list())
+      const response = await ctx.model.list()
+      failure = 'SCHEMA_INVALID'
+      const models = publicModels(response)
       const catalogRevision = createHash('sha256').update(JSON.stringify(models)).digest('hex')
       const snapshot = { version: 1, publisherInstanceId: instanceId,
         sequence: ++sequence, publishedAt: now(), catalogRevision, models }
-      if (Buffer.byteLength(JSON.stringify(snapshot)) > 1024 * 1024) return
+      if (Buffer.byteLength(JSON.stringify(snapshot)) > 1024 * 1024) {
+        diagnose('SCHEMA_INVALID')
+        return
+      }
+      failure = 'EMIT_FAILED'
       if (!disposed) await registration.events.emit('snapshot', snapshot)
     } catch {
       // A failed fetch emits nothing, preserving the receiver's last good cache.
+      diagnose(failure)
     } finally {
       inFlight = false
       if (!disposed) { timer = schedule(tick, 30_000); timer?.unref?.() }
@@ -77,7 +98,7 @@ export async function setupCatalogPublisher(ctx, {
     if (disposed) return registration.dispose()
     timer = schedule(tick, 0)
     timer?.unref?.()
-  }).catch(() => {})
+  }).catch(() => { diagnose('REGISTRATION_FAILED') })
   return { dispose() {
     if (disposed) return
     disposed = true

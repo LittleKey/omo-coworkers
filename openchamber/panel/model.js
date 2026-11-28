@@ -1,4 +1,4 @@
-export const VERSION = "8.0.1"
+export const VERSION = "8.0.2"
 const routes = new Set(["GET /workbench", "GET /models", "GET /models?refresh=true", "POST /workbench/context", "PATCH /workbench/draft", "POST /workbench/import-native", "POST /workbench/preview", "POST /workbench/operations"])
 function catalogRoute(method,path){
   if(method!=="GET"||!path.startsWith("/models?")||path.includes("#"))return false

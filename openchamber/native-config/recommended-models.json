@@ -1,9 +1,9 @@
 {
-  "version": "8.0.0",
+  "version": "8.0.2",
   "roles": {
-    "orchestrator": {"model":"openai/gpt-6.1-sol","variant":"medium"},
+    "orchestrator": {"model":"openai/gpt-6-astra","variant":"low"},
     "explorer": {"model":"openai/gpt-6.1-terra","variant":"medium"},
-    "oracle": {"model":"openai/gpt-6-astra","variant":"xhigh"},
+    "oracle": {"model":"magpie/agy-cli/gemini-4-neon","variant":"high"},
     "designer": {"model":"openai/gpt-6-astra","variant":"medium"},
     "fixer": {"model":"openai/gpt-6.2-sol","variant":"low"},
     "observer": {"model":"openai/gpt-6.1-terra","variant":"medium"},

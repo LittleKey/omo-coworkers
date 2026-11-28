@@ -78,11 +78,12 @@ test('cold publish pins saved revision, persists receipt, protects external chan
 
 test('publisher whitelists canonical ids, emits full unchanged snapshots and disposes', async () => {
   const model = { providerID: 'magpie', id: 'agy/model/name', modelID: 'different',
-    variants: { high: { secret: true } }, token: 'never' };
-  assert.deepEqual(publicModels([model]), [{ providerID: 'magpie', id: 'agy/model/name', variants: ['high'] }]);
+    variants: [{ id: 'high', settings: { secret: true } }], token: 'never' };
+  const response = { location: { directory: '/private' }, data: [model] };
+  assert.deepEqual(publicModels(response), [{ providerID: 'magpie', id: 'agy/model/name', variants: ['high'] }]);
   const tasks = [], emitted = [];
   let disposed = 0, calls = 0;
-  const ctx = { model: { async list() { calls++; return [model]; } },
+  const ctx = { model: { async list() { calls++; return response; } },
     rpc: { async register(spec, handlers) {
       assert.equal(spec.id, 'omo-coworkers.catalog.v1'); assert.deepEqual(handlers, {});
       return { events: { async emit(name, payload) { emitted.push(payload); } },

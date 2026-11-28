@@ -28,9 +28,11 @@ test('actual publisher → public envelope → SSE catalog → service/models �
     },
   });
   publisher = await setupCatalogPublisher({
-    model: { async list() { return [{ providerID: 'magpie', id: 'agy-cli/gemini/opaque',
-      modelID: 'underlying-alias', name: '多层模型', variants: { high: { token: 'never' }, low: {} },
-      apiKey: 'never' }]; } },
+    model: { async list() { return { location: { directory: selected }, data: [
+      { providerID: 'magpie', id: 'agy-cli/gemini/opaque',
+        modelID: 'underlying-alias', name: '多层模型',
+        variants: [{ id: 'high', settings: { token: 'never' } }, { id: 'low' }],
+        apiKey: 'never' }] }; } },
     rpc: { async register(spec, handlers) {
       eventType = `rpc.${spec.id}.snapshot`;
       assert.deepEqual(handlers, {});
