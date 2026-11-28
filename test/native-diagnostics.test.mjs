@@ -18,7 +18,7 @@ test("finite metadata rejects arbitrary secrets and bounds memory",()=>{
 test("helper wire boundary logs serialized type/bytes, settlement and sanitized errors",async()=>{
   const d=createDiagnostics();let release
   const host={serviceRequest:input=>{assert.equal(typeof input.body,"string");return new Promise(r=>release=r)}}
-  const pending=request({serviceRequest:i=>d.serviceRequest(host,i)},"POST","/intent-preview",{secret:"SECRET"})
+   const pending=request({serviceRequest:i=>d.serviceRequest(host,i)},"POST","/workbench/preview",{secret:"SECRET"})
   assert.deepEqual(JSON.parse(d.export()).map(e=>e.stage),["request-send"])
   release({status:200,body:{ok:true,secret:"SECRET"}});await pending
   let events=JSON.parse(d.export())
@@ -29,12 +29,12 @@ test("helper wire boundary logs serialized type/bytes, settlement and sanitized 
   events=JSON.parse(d.export());assert.equal(events.at(-1).errorCode,"HOST_TIMEOUT")
   assert(!d.export().includes("SECRET"))
 })
-test("UI stage instrumentation and copy fallback stay outside writing-inert regions",async()=>{
+test("UI diagnostic collection defaults off and never disables editing during publication",async()=>{
   const app=await readFile(new URL("../openchamber/panel/app.js",import.meta.url),"utf8")
   const html=await readFile(new URL("../openchamber/panel/index.html",import.meta.url),"utf8")
-  for(const stage of ["save-click","action-begin","preview-send","preview-ready","commit-send","commit-response","readback"])assert(app.includes(`trace.add("${stage}")`))
-  assert.match(app,/trace\.serviceRequest\(host,input\)/)
-  assert.match(app,/output\.focus\(\);output\.select\(\)/)
-  assert(html.indexOf('id="trace-panel"')>html.indexOf('其他 OMO 配置'))
-  assert.doesNotMatch(app,/\$\("trace-panel"\)\.inert/)
+   assert.match(app,/trace\.serviceRequest\(host,input\)/)
+   assert.match(app,/logs=false/)
+   assert.match(app,/1800000/)
+   assert.match(html,/<dialog id="data-dialog"/)
+   assert.doesNotMatch(app,/\.inert=/)
 })

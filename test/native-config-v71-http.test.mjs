@@ -2,91 +2,50 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { ConfigManager } from '../openchamber/native-config/manager.mjs';
 import { createService } from '../openchamber/service/main.mjs';
-test('API3 HTTP ACP integration: controls, consent, leaf edits, legacy undo and pending recovery', async t => {
-  const root = fs.mkdtempSync(path.resolve('.opencode/work/validation/v71-http-'));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+
+test('v4 HTTP preserves ACP finite settings, independent guard, and risk consent', async () => {
+  const base = path.resolve('.opencode/work/workbench-fixtures');
+  fs.mkdirSync(base, { recursive: true, mode: 0o700 });
+  const root = fs.mkdtempSync(path.join(base, 'acp-http-'));
+  const dataDir = fs.mkdtempSync(path.join(base, 'acp-private-'));
   const file = path.join(root, 'oh-my-opencode-slim.jsonc');
-  fs.writeFileSync(file, '{"disabled_agents":null}');
-  const manager = new ConfigManager(root), token = 'a'.repeat(48);
-  const server = createService({ token, root, manager, catalog: { get: async () => ({ catalog: [], diagnostics: ['fixture'], variants: {}, provenance: { runtimeVerified: false } }) } });
+  fs.writeFileSync(file, '{"acpAgents":{"claude":{"command":"personal","permissionMode":"reject","timeoutMs":2147483647,"env":{"TOKEN":"fixture-secret"}}}}', { mode: 0o600 });
+  const token = 'a'.repeat(48);
+  const server = createService({ root, dataDir, token, catalog: { get: async () => ({models:[]}), dispose() {} } });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  t.after(() => new Promise(resolve => server.close(resolve)));
-  const request = async (route, body, method = body === undefined ? 'GET' : 'POST') => {
-    const response = await fetch(`http://127.0.0.1:${server.address().port}${route}`, { method, headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
-    return { status: response.status, body: await response.json() };
+  const call = async (route, body, method = body ? 'POST' : 'GET') => {
+    const response = await fetch(`http://127.0.0.1:${server.address().port}${route}`, {
+      method, headers: {authorization:['Bearer',token].join(' '),'content-type':'application/json'},
+      ...(body ? {body:JSON.stringify(body)} : {}) });
+    return { status:response.status, body:await response.json() };
   };
-  const snapshot = async () => (await request('/snapshot')).body;
-  const preview = async intent => (await request('/intent-preview', { revision: (await snapshot()).revision, intent })).body;
-  let view = (await snapshot()).acpAgents.find(a => a.id === 'claude');
-  assert.equal(view.enabled, null); assert.equal(view.membershipEditable, false);
-  assert.equal(view.settings.timeoutMs.value, 0); assert.equal(view.settings.cwd.value, null);
-  assert.ok(view.env.every(e => e.value === null && !e.editable));
-  fs.writeFileSync(file, '{}');
-  let missing = await request('/intent-preview', { revision: (await snapshot()).revision, intent: { kind: 'adopt-content', capabilityId: 'claude-acp-guidance' } });
-  assert.equal(missing.status, 409); assert.equal(missing.body.error.code, 'MISSING_TRANSPORT');
-  assert.equal(fs.readFileSync(file, 'utf8'), '{}');
-  assert.equal(fs.existsSync(path.join(root, '.omo-coworkers/manager-state.json')), false);
-  let p = await preview({ kind: 'acp-create', agentId: 'claude' });
-  assert.ok(p.previewId); assert.ok(p.changes.some(c => c.risk));
-  const summary = p.changes[0].entrySummary;
-  assert.equal(summary.action, 'create'); assert.equal(summary.agentId, 'claude');
-  assert.deepEqual(summary.runtime, { command: 'claude-agent-acp', args: [], timeoutMs: 0, permissionMode: 'ask' });
-  assert.ok(!JSON.stringify(summary).includes('prompt')); assert.ok(!JSON.stringify(summary).includes('env'));
-  let response = await request('/config', { previewId: p.previewId }, 'PATCH');
-  assert.equal(response.body.error.code, 'CONFIRMATION_REQUIRED');
-  assert.equal(fs.readFileSync(file, 'utf8'), '{}');
-  p = await preview({ kind: 'acp-create', agentId: 'claude' });
-  response = await request('/config', { previewId: p.previewId, confirmRisk: true }, 'PATCH');
-  assert.equal(response.status, 200); assert.equal(response.body.runtimeVerified, false);
-  const created = response.body.transactionId;
-  let deletion = await request('/undo-preview', { transactionId: created });
-  assert.equal(deletion.status, 200);
-  assert.equal(deletion.body.changes[0].entrySummary.action, 'delete');
-  assert.deepEqual(deletion.body.changes[0].entrySummary.runtime, summary.runtime);
-  // Other agent credentials must not appear in either public entry preview.
-  const objectWithSecret = JSON.parse(fs.readFileSync(file));
-  objectWithSecret.acpAgents.antigravity = { command: 'personal', env: { TOKEN: 'fixture-other-agent-secret' } };
-  fs.writeFileSync(file, JSON.stringify(objectWithSecret));
-  deletion = await request('/undo-preview', { transactionId: created });
-  assert.equal(deletion.status, 200);
-  assert.ok(!JSON.stringify(deletion.body).includes('fixture-other-agent-secret'));
-  view = (await snapshot()).acpAgents.find(a => a.id === 'claude');
-  assert.equal(view.settings.command.value, 'claude-agent-acp'); assert.equal(view.settings.permissionMode.value, 'ask');
-  assert.equal(view.env.filter(e => e.editable).length, 3);
-  const envKey = 'CLAUDE_CODE_DISABLE_CLAUDE_MDS';
-  p = await preview({ kind: 'acp-settings', agentId: 'claude', behaviorEnv: { [envKey]: '1' } });
-  assert.equal(p.changes[0].risk, 'behavior-change');
-  response = await request('/config', { previewId: p.previewId }, 'PATCH');
-  assert.equal(response.body.error.code, 'CONFIRMATION_REQUIRED');
-  p = await preview({ kind: 'acp-settings', agentId: 'claude', behaviorEnv: { [envKey]: '1' } });
-  response = await request('/config', { previewId: p.previewId, confirmRisk: true }, 'PATCH');
-  assert.equal(response.status, 200);
-  assert.equal((await snapshot()).acpAgents.find(a => a.id === 'claude').env.find(e => e.key === envKey).value, '1');
-  p = await preview({ kind: 'acp-settings', agentId: 'claude', enabled: false, settings: { args: [], timeoutMs: 12, cwd: 'relative', wrapperModel: 'provider/model' } });
-  response = await request('/config', { previewId: p.previewId, confirmRisk: true }, 'PATCH');
-  assert.equal(response.status, 200);
-  const saved = response.body.transactionId;
-  assert.deepEqual(JSON.parse(fs.readFileSync(file)).disabled_agents, ['observer', 'claude']);
-  let undo = await request('/undo-preview', { transactionId: saved });
-  assert.equal(undo.status, 200);
-  assert.equal((await request('/config', { previewId: undo.body.previewId, confirmRisk: true }, 'PATCH')).status, 200);
-  assert.equal(JSON.parse(fs.readFileSync(file)).acpAgents.claude.timeoutMs, 0);
-  // Historical ordinary Delta remains readable through the public API3 undo.
-  const legacy = manager.preview({ revision: manager.snapshot().revision, operations: [{ resourceId: 'config', field: ['agents', 'writer', 'model'], action: 'set', value: 'provider/legacy' }] });
-  const legacySaved = manager.save({ previewId: legacy.previewId });
-  undo = await request('/undo-preview', { transactionId: legacySaved.transactionId });
-  assert.equal(undo.status, 200);
-  assert.equal((await request('/config', { previewId: undo.body.previewId, confirmRisk: true }, 'PATCH')).status, 200);
-  p = await preview({ kind: 'acp-settings', agentId: 'claude', settings: { timeoutMs: 17 } });
-  manager.files.inject = event => { if (event === 'after-file') throw Error('fixture interruption'); };
-  response = await request('/config', { previewId: p.previewId }, 'PATCH');
-  assert.equal(response.body.error.code, 'RECOVERY_REQUIRED');
-  manager.files.inject = () => {};
-  await snapshot(); assert.ok(manager.state().pending);
-  assert.equal((await request('/recover', { confirm: true })).status, 200);
-  assert.equal(manager.state().pending, null);
-  assert.equal(JSON.parse(fs.readFileSync(file)).acpAgents.claude.timeoutMs, 0);
-  assert.equal((await request('/preview', {})).status, 410);
+  try {
+    const snapshot = (await call('/workbench')).body;
+    assert.equal(snapshot.draft.roles.claude.permissionMode, 'reject');
+    assert.equal(snapshot.draft.roles.claude.timeoutMs, 2147483647);
+    assert.equal(JSON.stringify(snapshot).includes('fixture-secret'), false);
+    const draft = snapshot.draft;
+    draft.settings.allowGlobalWrites = true;
+    Object.assign(draft.roles.claude, { args:['new'],cwd:'relative',permissionMode:'ask',
+      behaviorEnv:{CLAUDE_CODE_DISABLE_CLAUDE_MDS:'1'},requestedVariant:'unsupported-intent' });
+    assert.equal((await call('/workbench/draft', {expectedRevision:0,mutationId:'http_save_1',draft},'PATCH')).status,200);
+    const preview = (await call('/workbench/preview',{revision:1,mode:'publish'})).body;
+    assert.ok(preview.requiredConfirmations.includes('acpExecution'));
+    assert.equal(JSON.stringify(preview).includes('fixture-secret'),false);
+    const request = { operationId:'http_operation_1',previewId:preview.previewId,revision:1,
+      diffDigest:preview.diffDigest,targetId:preview.writeTarget.targetId,confirmations:[] };
+    assert.equal((await call('/workbench/operations',request)).status,409);
+    request.confirmations=preview.requiredConfirmations;
+    const applied=await call('/workbench/operations',request);
+    assert.equal(applied.body.operation.state,'applied');
+    assert.equal(applied.body.operation.runtime,'pending');
+    const native=JSON.parse(fs.readFileSync(file));
+    assert.equal(native.acpAgents.claude.env.TOKEN,'fixture-secret');
+    assert.equal(native.acpAgents.claude.env.CLAUDE_CODE_DISABLE_CLAUDE_MDS,'1');
+    assert.equal(native.acpAgents.claude.requestedVariant,undefined);
+    assert.deepEqual(native.acpAgents.claude.args,['new']);
+    for (const route of ['/undo-preview','/recover','/intent-preview'])
+      assert.equal((await call(route,{})).status,410);
+  } finally { await new Promise(resolve=>server.close(resolve)); }
 });

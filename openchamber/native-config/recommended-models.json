@@ -1,0 +1,17 @@
+{
+  "version": "8.0.0",
+  "roles": {
+    "orchestrator": {"model":"openai/gpt-6.1-sol","variant":"medium"},
+    "explorer": {"model":"openai/gpt-6.1-terra","variant":"medium"},
+    "oracle": {"model":"openai/gpt-6-astra","variant":"xhigh"},
+    "designer": {"model":"openai/gpt-6-astra","variant":"medium"},
+    "fixer": {"model":"openai/gpt-6.2-sol","variant":"low"},
+    "observer": {"model":"openai/gpt-6.1-terra","variant":"medium"},
+    "council": {"model":"openai/gpt-6.1-sol","variant":"xhigh"},
+    "councillor": {"model":"openai/gpt-6-astra","variant":"xhigh"},
+    "document-writer": {"model":"magpie/agy-cli/gemini-4-hydrogen","variant":"medium"},
+    "lark-operator": {"model":"openai/gpt-6.1-terra","variant":"medium"},
+    "claude": {"wrapperModel":"openai/gpt-6.1-terra","requestedVariant":"medium"},
+    "antigravity": {"wrapperModel":"magpie/agy-cli/gemini-4-neon","requestedVariant":"high"}
+  }
+}

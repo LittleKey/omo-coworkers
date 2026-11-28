@@ -1,6 +1,6 @@
 {
   "name": "omo-coworkers",
-  "version": "7.1.2",
+  "version": "8.0.0",
   "type": "module",
   "description": "OpenChamber capability panel with focused coworker role settings, explicit project-content adoption, and native skills and plugin contributions.",
   "license": "MIT",
@@ -35,7 +35,7 @@
     "engines": { "openchamber": ">=2.8.0" },
     "contributes": {
       "panel": { "id": "omo-coworkers", "name": "OMO Coworkers", "icon": "ri-team-line", "entry": "openchamber/panel/index.html", "mobile": true },
-      "service": { "entry": "openchamber/service/main.mjs", "runtime": "host" },
+      "service": { "entry": "openchamber/service/main.mjs", "runtime": "host", "provides": ["opencode"] },
       "skills": "skills",
       "opencodePlugin": "openchamber/plugin"
     }

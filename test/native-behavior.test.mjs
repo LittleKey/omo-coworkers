@@ -92,6 +92,6 @@ test("relocated complete native plugin loads default-off without registering tra
   fs.cpSync(new URL("../plugins/claude-advisor/", import.meta.url), path.join(relocated, "plugins/claude-advisor"), { recursive: true })
   fs.writeFileSync(path.join(relocated, "package.json"), '{"type":"module"}')
   const entry = new URL("file://" + path.join(relocated, "openchamber/plugin/index.mjs")).href
-  const child = spawnSync(process.execPath, ["--input-type=module", "-e", `const {default:p}=await import(${JSON.stringify(entry)}); await p.setup(new Proxy({}, {get(){throw Error("unexpected registration")}}));`], { env: { HOME: home }, encoding: "utf8" })
+  const child = spawnSync(process.execPath, ["--input-type=module", "-e", `const {default:p}=await import(${JSON.stringify(entry)}); await p.setup(new Proxy({}, {get(_target,key){if(key==="rpc"||key==="model")return undefined;throw Error("unexpected registration")}}));`], { env: { HOME: home }, encoding: "utf8" })
   assert.equal(child.status, 0, child.stderr)
 })

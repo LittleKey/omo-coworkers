@@ -1,5 +1,5 @@
 const stages=new Set(["save-click","action-begin","preview-send","request-send","service-response","request-error","preview-ready","commit-send","commit-response","readback"])
-const paths=new Set(["/snapshot","/models","/contributions","/intent-preview","/config","/settings","/undo-preview","/recover","/migration-preview"])
+const paths=new Set(["/workbench","/models","/models?refresh=true","/workbench/context","/workbench/draft","/workbench/import-native","/workbench/preview","/workbench/operations"])
 const methods=new Set(["GET","POST","PATCH"])
 const codes=new Set(["HOST_TIMEOUT","HOST_REJECTED","SERVICE_UNAVAILABLE","INVALID_REQUEST","INVALID_ROUTE","CONFLICT","INVALID_CONFIG","MISSING_TRANSPORT","PROTECTED_FIELD","PREVIEW_EXPIRED","REQUEST_FAILED"])
 // Memory only: no arbitrary caller text, persistence, telemetry or automatic copy.

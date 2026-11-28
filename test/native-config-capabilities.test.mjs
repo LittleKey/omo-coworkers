@@ -92,36 +92,31 @@ test('model saves do not touch content/dependencies, adoption explicit inline co
   assert.ok(!JSON.stringify(snapshot).includes('orchestratorPrompt'));
   assert.equal(snapshot.capabilities.find(c => c.id === 'lark-role').dependencies.readiness, 'unknown');
 });
-test('API3 retains old user-template undo and conditional pending recovery', async t => {
+test('legacy manager retains local user-template undo and pending recovery (not a public v4 writer)', async t => {
   const { m, root } = fixture(t, { agents: { 'document-writer': { model: 'v/old' } } });
   const snapshot = m.snapshot();
   const created = save(m, m.saveUserTemplate({ revision: snapshot.revision, id: 'user-old', description: 'Legacy definition', selection: [{ resourceId: 'config', field: ['agents', 'document-writer', 'model'] }] }));
-  const token = 'z'.repeat(32), server = createService({ root, token, manager: m, catalog: { get: async () => ({ catalog: [], variants: {} }) } });
-  await new Promise(r => server.listen(0, '127.0.0.1', r)); t.after(() => new Promise(r => server.close(r)));
-  const request = async (route, body, method = 'POST') => {
-    const response = await fetch(`http://127.0.0.1:${server.address().port}${route}`, { method, headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify(body) });
-    return { status: response.status, data: await response.json() };
-  };
-  let result = await request('/undo-preview', { transactionId: created.transactionId });
-  assert.equal(result.status, 200);
-  assert.equal((await request('/config', { previewId: result.data.previewId, confirmRisk: true }, 'PATCH')).status, 200);
+   save(m, m.undoPreview({ transactionId: created.transactionId }));
   assert.equal(m.userTemplates().length, 0);
   const p = intent(m, role({ model: 'v/new', variant: null }));
   m.files.inject = s => { if (s === 'after-file') throw Error('interrupted'); };
   assert.throws(() => save(m, p)); m.files.inject = () => {};
-  result = await request('/recover', { confirm: true }); assert.equal(result.status, 200);
+   assert.equal(m.recover({ confirm: true }).ok, true);
   assert.equal(m.capabilitySnapshot().capabilities[0].settings.model.value, 'v/old');
 });
-test('API3 finite routes retire arbitrary editor and models wrapper is injected readonly', async t => {
+test('API4 finite routes retire old authority and models wrapper is injected readonly', async t => {
   const { m, root, file } = fixture(t), before = fs.readFileSync(file, 'utf8');
-  const calls = [], token = 'a'.repeat(32), server = createService({ root, token, manager: m, catalog: { get: async options => { calls.push(options); return { catalog: ['v/model'], variants: {}, provenance: 'unverified' }; } } });
+   const dataDir = fs.mkdtempSync(path.join(path.dirname(root), 'workbench-private-'));
+   t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
+   const calls = [], token = 'a'.repeat(32), server = createService({ root, dataDir, token, catalog: { get: async options => { calls.push(options); return { models: [{providerID:'v',id:'model',variants:[]}], status: 'unbound' }; } } });
   await new Promise(r => server.listen(0, '127.0.0.1', r)); t.after(() => new Promise(r => server.close(r)));
   const request = (url, method = 'GET', body, auth = true) => fetch(`http://127.0.0.1:${server.address().port}${url}`, { method, headers: { 'content-type': 'application/json', ...(auth ? { authorization: `Bearer ${token}` } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
   assert.equal((await request('/health', 'GET', null, false)).status, 401);
-  assert.equal((await (await request('/health')).json()).apiVersion, 3);
+   assert.equal((await (await request('/health')).json()).apiVersion, 4);
   for (const url of ['/preview', '/reveal', '/template-preview', '/user-templates']) assert.equal((await request(url, 'POST', {})).status, 410);
-  const snapshot = await (await request('/snapshot')).json(); assert.ok(snapshot.capabilities); assert.equal(snapshot.resources, undefined);
-  const models = await (await request('/models?refresh=true')).json(); assert.equal(models.ok, true); assert.equal(models.provenance, 'unverified'); assert.deepEqual(calls, [{ refresh: true }]);
+   assert.equal((await request('/snapshot')).status, 410);
+   const snapshot = await (await request('/workbench')).json(); assert.ok(snapshot.capabilities); assert.equal(snapshot.resources, undefined);
+   const models = await (await request('/models?refresh=true')).json(); assert.equal(models.ok, true); assert.equal(models.status, 'unbound'); assert.deepEqual(calls, [{ directory: undefined, refresh: true }]);
   assert.equal((await request('/models?refresh=false')).status, 400);
   assert.equal((await request('/models?refresh=true&refresh=true')).status, 400);
   assert.equal(fs.readFileSync(file, 'utf8'), before);

@@ -38,12 +38,12 @@ test("root extension cold-loads offline without node_modules; optional installed
       assert.equal(folder, join(target, "openchamber/plugin"))
       const nested = JSON.parse(await fs.readFile(join(folder, "package.json"), "utf8"))
       assert.equal(nested.type, "module")
-      assert.equal(pkg.version, "7.1.2")
+       assert.equal(pkg.version, "8.0.0")
       assert.equal(nested.version, pkg.version)
       assert.equal(pkg.openchamber.engines.openchamber, ">=2.8.0")
       assert.equal(pkg.openchamber.contributes.panel.entry, "openchamber/panel/index.html")
       assert.equal(pkg.openchamber.contributes.panel.mobile, true)
-      assert.deepEqual(pkg.openchamber.contributes.service, {entry:"openchamber/service/main.mjs", runtime:"host"})
+       assert.deepEqual(pkg.openchamber.contributes.service, {entry:"openchamber/service/main.mjs", runtime:"host", provides:["opencode"]})
       assert.deepEqual(Object.keys(pkg.openchamber.contributes).sort(), ["opencodePlugin", "panel", "service", "skills"])
       await fs.access(join(target, pkg.openchamber.contributes.panel.entry))
       await fs.access(join(target, pkg.openchamber.contributes.service.entry))
@@ -118,7 +118,7 @@ test("root extension cold-loads offline without node_modules; optional installed
         assert.equal(transforms, 0);
         assert.equal(hooks, 1);
         assert.ok(warnings.some(x => x.includes("ROLE_PAYLOAD_INVALID")));
-      `], { env: { ...process.env, OMO_COWORKERS_ENABLE_WRITER_ROLE: "1", OMO_COWORKERS_ENABLE_CLAUDE_GUARD: "1" }, cwd: root, encoding: "utf8" })
+       `], { env: { ...process.env, HOME:fixtureHome, XDG_CONFIG_HOME:join(fixtureHome,".config"), TMPDIR:join(root,"tmp"), OMO_COWORKERS_ENABLE_WRITER_ROLE: "1", OMO_COWORKERS_ENABLE_CLAUDE_GUARD: "1" }, cwd: root, encoding: "utf8" })
       assert.equal(damaged.status, 0, damaged.stderr || String(damaged.error))
     } finally {
       await fs.rm(root, { recursive: true, force: true })

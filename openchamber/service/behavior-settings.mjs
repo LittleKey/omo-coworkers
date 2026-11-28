@@ -18,12 +18,26 @@ export function updateBehaviorSettings(options = {}) {
   const target = behaviorPath(options)
   const directory = path.dirname(target)
   let lock, temporary
+  const lockPath = path.join(directory, "behavior.lock")
   try {
     assertBehaviorPath(target)
     fs.mkdirSync(directory, { recursive: true, mode: 0o700 })
     assertBehaviorPath(target)
+    if (fs.existsSync(lockPath)) {
+      assertBehaviorPath(lockPath)
+      const before = fs.lstatSync(lockPath)
+      let owner
+      try { owner = JSON.parse(fs.readFileSync(lockPath, "utf8")) } catch { fail("BUSY") }
+      if (!owner || Object.keys(owner).join() !== "pid" || !Number.isSafeInteger(owner.pid) || owner.pid < 1) fail("BUSY")
+      try { process.kill(owner.pid, 0); fail("BUSY") }
+      catch (error) { if (error.code !== "ESRCH") throw error }
+      const after = fs.lstatSync(lockPath)
+      if (before.dev !== after.dev || before.ino !== after.ino || before.mtimeMs !== after.mtimeMs || before.size !== after.size) fail("BUSY")
+      fs.unlinkSync(lockPath)
+    }
     try { lock = fs.openSync(path.join(directory, "behavior.lock"), fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY | fs.constants.O_NOFOLLOW, 0o600) }
     catch (error) { if (error.code === "EEXIST") fail("BUSY"); throw error }
+    fs.writeFileSync(lock, JSON.stringify({ pid: process.pid })); fs.fsyncSync(lock)
     const before = readBehaviorSettings(options)
     if (before.source === "blocked") fail("INVALID_OR_UNSAFE_BEHAVIOR_SETTINGS")
     if (before.revision !== options.revision) fail("CONFLICT")
@@ -45,8 +59,11 @@ export function updateBehaviorSettings(options = {}) {
   } finally {
     if (temporary) { try { fs.unlinkSync(temporary) } catch {} }
     if (lock !== undefined) {
+      try {
+        const current = fs.lstatSync(lockPath), owned = fs.fstatSync(lock)
+        if (current.dev === owned.dev && current.ino === owned.ino) fs.unlinkSync(lockPath)
+      } catch {}
       fs.closeSync(lock)
-      try { fs.unlinkSync(path.join(directory, "behavior.lock")) } catch {}
     }
   }
 }

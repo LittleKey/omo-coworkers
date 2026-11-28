@@ -1,31 +1,17 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="color-scheme" content="light dark"><title>OMO 项目能力</title><link rel="stylesheet" href="./panel.css"></head>
-<body><main>
-  <header><div><h1>OMO Coworkers · 设置</h1></div><button id="refresh" type="button">刷新</button></header>
-  <p id="notice" role="status" aria-live="polite"></p>
-  <div id="leave" class="callout" hidden><strong>有尚未保存的设置</strong><p>继续编辑，或明确放弃后离开。</p><div class="actions"><button id="stay">继续编辑</button><button id="discard-leave">放弃并离开</button></div></div>
-  <div class="workspace" id="workspace">
-    <nav id="list" aria-label="项目能力"><p class="muted">正在读取能力…</p></nav>
-    <section id="detail" aria-label="能力设置"><p class="empty">选择一项能力，查看项目内容与可用设置。</p></section>
-  </div>
-  <section id="confirmation" class="callout" hidden aria-labelledby="confirm-title">
-    <h2 id="confirm-title" tabindex="-1">确认本次修改</h2><div id="summary"></div><p id="expiry" class="muted"></p><div id="risk"></div>
-    <div class="actions"><button id="commit" class="primary">确认保存</button><button id="cancel-preview">返回设置</button></div>
-  </section>
-  <details class="support"><summary>环境、扩展与恢复</summary>
-    <p class="muted">编辑默认 HOME/XDG 候选目录，不代表运行中实例正在使用它。自定义根暂不支持。服务使用宿主 Node 权限，不是操作系统沙箱。</p>
-    <div id="diagnostics"></div><div id="guard"></div>
-    <details><summary>最近修改与恢复</summary><p class="muted">最近十次，无时间期限；撤销先预览，冲突或容量不足会停止。</p><div id="history"></div><div id="recovery"></div></details>
-    <p class="muted">其他 OMO 配置不会在此编辑；当前服务未提供其只读摘要。</p>
-  </details>
-  <details id="trace-panel" class="trace-panel" open>
-    <summary>临时诊断日志</summary>
-    <p class="muted">本页已启用，最多保留 100 条内存记录；关闭或重载页面即丢失。不记录配置内容、提示词或凭据。发送记录仅表示面板调用 SDK，不能证明宿主收到请求或服务开始处理。</p>
-    <div class="actions"><button id="trace-copy" type="button">复制日志</button><button id="trace-clear" type="button">清空日志</button></div>
-    <label for="trace-output">安全请求元数据（可手动选择复制）</label>
-    <textarea id="trace-output" readonly spellcheck="false" aria-describedby="trace-status">[]</textarea>
-    <p id="trace-status" class="muted" role="status">仅点击复制才会写入剪贴板；不会自动上传或保存日志。</p>
-  </details>
-  <footer>保存不等于运行中生效。需要时通过宿主 UI 重载并核对新会话；这里不切换会话、不自动重启。</footer>
-</main><script type="module" src="./app.js"></script></body></html>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>OMO 配置工作台</title><link rel="stylesheet" href="./panel.css"></head>
+<body>
+<div class="shell" id="app">
+  <header><nav aria-label="工作台"><button id="tab-roles" aria-current="page">角色</button><button id="tab-settings">设置</button></nav><span class="target">全局 OMO <span id="reload" class="badge" hidden>待重载</span></span></header>
+  <div id="banner" class="banner" role="status" hidden></div>
+  <div id="roles-view" class="layout"><aside class="sidebar"><input id="role-search" type="search" aria-label="搜索角色" placeholder="搜索角色"><nav id="list" aria-label="角色列表"></nav></aside><main class="detail" id="detail"><p class="muted">正在连接工作台…</p></main></div>
+  <main id="settings-view" class="settings" hidden></main>
+  <footer><span id="status" role="status">正在连接…</span><button id="retry" hidden>重试保存</button><button id="restore" disabled>还原草稿</button><button id="publish" class="primary" disabled>发布</button></footer>
+</div>
+<dialog id="picker" aria-labelledby="picker-title"><div class="heading"><h1 id="picker-title">选择模型</h1><button id="picker-close">关闭</button></div><div class="row"><input id="search" type="search" aria-label="搜索模型" placeholder="搜索完整模型 ID"><button id="refresh" aria-label="重新连接模型目录">↻</button></div><small id="cache-status"></small><div id="options"></div></dialog>
+<dialog id="review" aria-labelledby="review-title"><h1 id="review-title">发布预览</h1><div id="diffs"></div><div id="risk"></div><small>仅覆盖扩展托管项，保留其余配置与 opencode.json</small><div class="dialog-actions"><button id="cancel">取消</button><button id="confirm" class="primary">确认发布</button></div></dialog>
+<dialog id="data-dialog" aria-labelledby="data-title"><h1 id="data-title"></h1><pre id="data-text"></pre><div class="dialog-actions"><button id="data-close">取消</button><button id="data-confirm" class="primary" hidden>确认</button></div></dialog>
+<dialog id="import-dialog" aria-labelledby="import-title"><h1 id="import-title">导入配置备份</h1><label for="import-text">粘贴工作台 JSON 备份（最多 60 KB）</label><textarea id="import-text" rows="10" maxlength="60000"></textarea><small>仅保存私有草稿，由服务端验证。未完成输入仅作备份，不导入为有效配置；不会写入原生文件。</small><p id="import-error" role="alert"></p><div class="dialog-actions"><button id="import-close">取消</button><button id="import-confirm" class="primary">检查并导入</button></div></dialog>
+<script type="module" src="./app.js"></script>
+</body></html>
